@@ -1,0 +1,38 @@
+[package]
+name = "ferris-scan"
+version = "0.1.0"
+edition = "2021"
+authors = ["vnilabean"]
+description = "A blazingly fast disk usage analyzer written in Rust"
+license = "MIT"
+
+[lib]
+name = "ferris_scan"
+path = "src/lib.rs"
+
+[dependencies]
+# Filesystem traversal
+walkdir = "2.5.0"
+jwalk = "0.8.1"
+
+# Parallel processing
+rayon = "1.11.0"
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+
+# Terminal UI
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+
+# Error handling
+anyhow = "1.0.100"
+
+[dev-dependencies]
+tempfile = "3.24.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
