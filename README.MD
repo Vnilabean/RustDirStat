@@ -50,6 +50,39 @@ This is what happens when you rebuild a legacy tool *the right way*.
 
 ---
 
+## 🏗️ Architecture: Core + Multi-Frontend
+
+ferris-scan uses a **modular architecture** that separates business logic from presentation:
+
+```
+Core Library (lib.rs)  →  Multiple Frontends (bin/*.rs)
+    ↓                         ↓              ↓
+  Scanner                    TUI           GUI
+  FileTree                 (ratatui)    (eframe/egui)
+  Pro Features
+```
+
+### Two User Interfaces, One Engine
+
+**🖥️ TUI (Terminal)** - For power users and servers
+```bash
+cargo run --bin ferris-scan-tui -- /path/to/scan
+```
+
+**🪟 GUI (Graphical)** - For desktop users
+```bash
+cargo run --bin ferris-scan-gui -- /path/to/scan
+```
+
+**Why?** The scanning engine is implemented **once** in `lib.rs`, then shared by both frontends. This means:
+- ✅ Consistent behavior across UIs
+- ✅ Easier testing (core logic is UI-independent)
+- ✅ Future-proof (add Web UI, REST API, etc. without duplicating code)
+
+📖 **Read more:** [Multi-Frontend Architecture Guide](docs/MULTI_FRONTEND_ARCHITECTURE.md)
+
+---
+
 ## 💾 Get ferris-scan
 
 I follow the **"Aseprite Model"**: The source code is 100% open (MIT License), including all "pro" features. You can compile it yourself, modify it, or distribute it freely. However, if you want to **support indie development** and save time, you can purchase the pre-built installer.
@@ -90,10 +123,16 @@ Compile from source in 30 seconds:
 git clone https://github.com/yourusername/ferris-scan.git
 cd ferris-scan
 
-# Build with Pro features enabled
-cargo build --release --features pro
+# Build TUI (Terminal Interface) - Free version
+cargo build --release --bin ferris-scan-tui
 
-# Binary is in target/release/
+# Build TUI - Pro version with CSV export
+cargo build --release --features pro --bin ferris-scan-tui
+
+# Build GUI (Graphical Interface) - Pro version
+cargo build --release --features pro --bin ferris-scan-gui
+
+# Binaries are in target/release/
 ```
 
 **You get the exact same features.**  
