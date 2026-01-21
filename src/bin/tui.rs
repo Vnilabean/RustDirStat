@@ -1,29 +1,11 @@
-//! DEPRECATED: This file is kept for backward compatibility only.
+//! Terminal User Interface for ferris-scan
 //!
-//! # Core + Multi-Frontend Architecture
-//!
-//! ferris-scan now uses a modular architecture with separate binary targets:
-//!
-//! - **TUI (Terminal):** `cargo run --bin ferris-scan-tui`
-//! - **GUI (Graphical):** `cargo run --bin ferris-scan-gui`
-//!
-//! The core scanning logic lives in `lib.rs` and is shared by both frontends.
-//!
-//! ## Building
-//!
-//! ```bash
-//! # Build TUI (free version)
-//! cargo build --release --bin ferris-scan-tui
-//!
-//! # Build TUI (pro version with CSV export)
-//! cargo build --release --features pro --bin ferris-scan-tui
-//!
-//! # Build GUI (free version)
-//! cargo build --release --bin ferris-scan-gui
-//!
-//! # Build GUI (pro version with CSV export)
-//! cargo build --release --features pro --bin ferris-scan-gui
-//! ```
+//! This provides an interactive terminal UI for the disk usage analyzer.
+//! 
+//! # Architecture
+//! 
+//! This is a thin wrapper around the core `ferris_scan` library. It uses
+//! `ratatui` for rendering and handles all terminal-specific logic.
 
 use anyhow::Result;
 use crossterm::{
@@ -288,7 +270,7 @@ fn ui(f: &mut Frame, app: &App) {
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
-    let title = format!("ferris-scan v0.1.0 | {}", app.scan_path.display());
+    let title = format!("ferris-scan TUI v0.1.0 | {}", app.scan_path.display());
     
     #[cfg(feature = "pro")]
     let version_tag = " [PRO] ";

@@ -105,14 +105,14 @@ pub struct SharedProgress {
 }
 
 /// Entry that was skipped during scanning (permissions)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SkippedEntry {
     pub path: Option<PathBuf>,
     pub message: String,
 }
 
 /// Additional information gathered during a scan.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScanReport {
     pub skipped: Vec<SkippedEntry>,
 }
@@ -326,6 +326,37 @@ fn sort_tree(node: &mut Node) {
 
 
 // ============================================================================
+// SCAN STATE (For Frontend Polling)
+// ============================================================================
+
+/// Represents the current state of a scan operation.
+/// 
+/// Frontends (TUI/GUI) can poll this to update their UI accordingly.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScanState {
+    /// No scan is currently running
+    Idle,
+    /// Scan is in progress with current statistics
+    Scanning {
+        files_scanned: u64,
+        current_path: Option<PathBuf>,
+    },
+    /// Scan completed successfully with results
+    Done {
+        root: Node,
+        report: ScanReport,
+    },
+    /// Scan failed with error message
+    Error(String),
+}
+
+impl Default for ScanState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+// ============================================================================
 // SCANNER API (Primary Interface)
 // ============================================================================
 
@@ -333,13 +364,14 @@ fn sort_tree(node: &mut Node) {
 /// 
 /// This is the main interface for scanning directories. Use this instead of
 /// the lower-level `scan_directory` functions for better encapsulation.
+/// 
+/// # Multi-Frontend Architecture
+/// 
+/// This Scanner is designed to be used by multiple frontends (TUI, GUI, etc.).
+/// It provides both blocking and progress-based scanning methods.
 #[derive(Debug, Default)]
-
-
-
-
 pub struct Scanner {
-    // TODO:  Future: Add configuration options here (filters, exclusions, etc.)
+    // TODO: Future: Add configuration options here (filters, exclusions, etc.)
 }
 
 impl Scanner {
@@ -389,7 +421,7 @@ impl Scanner {
 
 
 
-    
+
     // ========================================================================
     // PRO FEATURE: Data Export
     // ========================================================================

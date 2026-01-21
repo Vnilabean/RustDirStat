@@ -6,9 +6,27 @@ authors = ["vnilabean"]
 description = "A blazingly fast disk usage analyzer written in Rust"
 license = "MIT"
 
+# ============================================================================
+# CORE + MULTI-FRONTEND ARCHITECTURE
+# ============================================================================
+# - lib.rs: Core business logic (Scanner, FileTree, ScanState)
+# - bin/tui.rs: Terminal User Interface (ratatui)
+# - bin/gui.rs: Graphical User Interface (eframe/egui)
+# ============================================================================
+
 [lib]
 name = "ferris_scan"
 path = "src/lib.rs"
+
+[[bin]]
+name = "ferris-scan-tui"
+path = "src/bin/tui.rs"
+required-features = []
+
+[[bin]]
+name = "ferris-scan-gui"
+path = "src/bin/gui.rs"
+required-features = []
 
 # ============================================================================
 # FEATURE FLAGS: "Open Source Code, Paid Binaries" Business Model
@@ -17,7 +35,8 @@ path = "src/lib.rs"
 # - Pro build: Includes data export (CSV) and advanced features
 #
 # To build Pro version:
-#   cargo build --release --features pro
+#   cargo build --release --features pro --bin ferris-scan-tui
+#   cargo build --release --features pro --bin ferris-scan-gui
 # ============================================================================
 
 [features]
@@ -31,16 +50,22 @@ jwalk = "0.8.1"
 # Parallel processing
 rayon = "1.11.0"
 
-# Terminal UI
-ratatui = "0.30.0"
-crossterm = "0.29.0"
-
 # Error handling
 anyhow = "1.0.100"
 
 # Pro-only dependencies (gated behind 'pro' feature)
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 csv = { version = "1.3.1", optional = true }
+
+# ============================================================================
+# FRONTEND DEPENDENCIES
+# ============================================================================
+# Terminal UI dependencies (used by bin/tui.rs)
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+
+# GUI dependencies (used by bin/gui.rs)
+eframe = "0.29.1"
 
 [dev-dependencies]
 tempfile = "3.24.0"
