@@ -248,7 +248,7 @@ ferris-scan "C:\"
 - [x] Windows permission error handling
 
 ### 🚧 Phase 2: Enhanced UI (v0.2 - **In Progress**)
-- [ ] Tree navigation (drill down/up directories)
+- [x] Tree navigation (drill down/up directories)
 - [ ] Multi-pane layout (tree + details + progress)
 - [ ] File deletion with confirmation modal
 - [ ] Sorting options (size/name/date)

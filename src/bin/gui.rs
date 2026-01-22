@@ -36,10 +36,53 @@ enum ScanStatus {
     Error(String),
 }
 
+/// Navigation state for tree browsing
+struct NavigationState {
+    /// Stack of nodes from root to current directory
+    path: Vec<Node>,
+}
+
+impl NavigationState {
+    fn new(root: Node) -> Self {
+        Self {
+            path: vec![root],
+        }
+    }
+
+    /// Get the current node being viewed
+    fn current(&self) -> &Node {
+        self.path.last().unwrap()
+    }
+
+    /// Get breadcrumb path as a string
+    fn breadcrumb(&self) -> String {
+        self.path
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// Navigate into a child directory
+    fn drill_down(&mut self, child: Node) {
+        self.path.push(child);
+    }
+
+    /// Navigate up to parent directory
+    fn drill_up(&mut self) -> bool {
+        if self.path.len() > 1 {
+            self.path.pop();
+            return true;
+        }
+        false
+    }
+}
+
 struct FerrisScanApp {
     scan_path: String,
     status: Arc<Mutex<ScanStatus>>,
     popup_message: Option<String>,
+    navigation: Option<NavigationState>,
 }
 
 impl FerrisScanApp {
@@ -48,6 +91,7 @@ impl FerrisScanApp {
             scan_path: initial_path.display().to_string(),
             status: Arc::new(Mutex::new(ScanStatus::Idle)),
             popup_message: None,
+            navigation: None,
         }
     }
 
@@ -81,7 +125,12 @@ impl FerrisScanApp {
 
             // Update status with result
             let new_status = match result {
-                Ok((root, report)) => ScanStatus::Done { root, report },
+                Ok((root, report)) => {
+                    // Initialize navigation with root
+                    // Note: We need to pass this to the app, but we can't easily do that here
+                    // So we'll initialize it when the status is read
+                    ScanStatus::Done { root, report }
+                }
                 Err(e) => ScanStatus::Error(e.to_string()),
             };
 
@@ -131,6 +180,8 @@ impl eframe::App for FerrisScanApp {
         let mut should_start_scan = false;
         let mut should_export = false;
         let mut should_reset = false;
+        let mut should_drill_up = false;
+        let mut should_drill_down: Option<Node> = None;
         let mut root_for_export: Option<Node> = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -186,22 +237,64 @@ impl eframe::App for FerrisScanApp {
                     }
                 }
                 ScanStatus::Done { root, report } => {
+                    // Initialize navigation if not already done
+                    if self.navigation.is_none() {
+                        self.navigation = Some(NavigationState::new(root.clone()));
+                    }
+
                     ui.label(format!("✓ Scan complete!"));
                     ui.label(format!("Total size: {}", format_size(root.size)));
                     ui.label(format!("Skipped entries: {}", report.skipped.len()));
                     ui.add_space(10.0);
 
-                    // Top entries
-                    ui.heading("Top Entries (by size)");
+                    // Breadcrumb navigation
+                    let breadcrumb = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.breadcrumb())
+                        .unwrap_or_else(|| "Root".to_string());
+                    let can_go_up = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.path.len() > 1)
+                        .unwrap_or(false);
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Location:");
+                        ui.label(egui::RichText::new(&breadcrumb).color(egui::Color32::from_rgb(100, 200, 255)));
+                        
+                        if can_go_up {
+                            if ui.button("← Go Up").clicked() {
+                                should_drill_up = true;
+                            }
+                        }
+                    });
+                    ui.separator();
+
+                    // Current directory entries
+                    let current_node = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.current())
+                        .unwrap_or(root);
+
+                    ui.heading(format!("Entries in: {}", current_node.name));
                     ui.separator();
 
                     egui::ScrollArea::vertical()
                         .max_height(300.0)
                         .show(ui, |ui| {
-                            for child in root.children.iter().take(20) {
+                            for child in &current_node.children {
                                 let icon = if child.is_dir { "📁" } else { "📄" };
                                 ui.horizontal(|ui| {
-                                    ui.label(format!("{} {}", icon, child.name));
+                                    let label_text = format!("{} {}", icon, child.name);
+                                    
+                                    if child.is_dir {
+                                        // Make directories clickable
+                                        if ui.button(label_text).clicked() {
+                                            should_drill_down = Some(child.clone());
+                                        }
+                                    } else {
+                                        ui.label(label_text);
+                                    }
+                                    
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
@@ -248,6 +341,17 @@ impl eframe::App for FerrisScanApp {
         }
         if should_reset {
             *self.status.lock().unwrap() = ScanStatus::Idle;
+            self.navigation = None;
+        }
+        if should_drill_up {
+            if let Some(ref mut nav) = self.navigation {
+                nav.drill_up();
+            }
+        }
+        if let Some(child) = should_drill_down {
+            if let Some(ref mut nav) = self.navigation {
+                nav.drill_down(child);
+            }
         }
 
         // Popup modal

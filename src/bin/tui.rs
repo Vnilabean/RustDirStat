@@ -19,7 +19,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::{
@@ -43,12 +43,68 @@ enum AppState {
     ViewingResults(Node, ScanReport),
 }
 
+/// Navigation state for tree browsing
+struct NavigationState {
+    /// Stack of nodes from root to current directory
+    path: Vec<Node>,
+    /// Currently selected item index in the list
+    selected: usize,
+}
+
+impl NavigationState {
+    fn new(root: Node) -> Self {
+        Self {
+            path: vec![root],
+            selected: 0,
+        }
+    }
+
+    /// Get the current node being viewed
+    fn current(&self) -> &Node {
+        self.path.last().unwrap()
+    }
+
+    /// Get breadcrumb path as a string
+    fn breadcrumb(&self) -> String {
+        self.path
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// Navigate into a child directory
+    fn drill_down(&mut self, index: usize) -> bool {
+        let current = self.current();
+        if let Some(child) = current.children.get(index) {
+            if child.is_dir {
+                self.path.push(child.clone());
+                self.selected = 0;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Navigate up to parent directory
+    fn drill_up(&mut self) -> bool {
+        if self.path.len() > 1 {
+            self.path.pop();
+            self.selected = 0;
+            return true;
+        }
+        false
+    }
+}
+
 struct App {
     state: AppState,
     should_quit: bool,
     scan_path: PathBuf,
     shared_progress: Arc<SharedProgress>,
     popup_message: Option<String>,
+    navigation: Option<NavigationState>,
+    list_state: ListState,
 }
 
 impl App {
@@ -59,6 +115,8 @@ impl App {
             scan_path,
             shared_progress: Arc::new(SharedProgress::default()),
             popup_message: None,
+            navigation: None,
+            list_state: ListState::default(),
         }
     }
 
@@ -183,7 +241,9 @@ where
                 if let Some(handle) = scan_handle.take() {
                     match handle.join() {
                         Ok(Ok((root, report))) => {
-                            app.state = AppState::ViewingResults(root, report);
+                            app.state = AppState::ViewingResults(root.clone(), report);
+                            app.navigation = Some(NavigationState::new(root));
+                            app.list_state.select(Some(0));
                         }
                         Ok(Err(e)) => {
                             app.show_popup(format!("Scan error: {}", e));
@@ -198,7 +258,7 @@ where
 
         // Render UI (throttled to ~30 FPS)
         if last_draw.elapsed() >= Duration::from_millis(33) {
-            terminal.draw(|f| ui(f, app))?;
+            terminal.draw(|f| ui(f, &mut *app))?;
             last_draw = std::time::Instant::now();
         }
 
@@ -218,11 +278,66 @@ where
 
                 // Main key handlers
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
+                    KeyCode::Char('q') => {
                         app.should_quit = true;
+                    }
+                    KeyCode::Esc => {
+                        // If in a subdirectory, go up; otherwise quit
+                        if let Some(ref mut nav) = app.navigation {
+                            if !nav.drill_up() {
+                                app.should_quit = true;
+                            }
+                        } else {
+                            app.should_quit = true;
+                        }
                     }
                     KeyCode::Char('e') => {
                         app.handle_export();
+                    }
+                    KeyCode::Enter => {
+                        // Drill down into selected directory
+                        if let Some(ref mut nav) = app.navigation {
+                            if let Some(selected) = app.list_state.selected() {
+                                if nav.drill_down(selected) {
+                                    app.list_state.select(Some(0));
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        // Go up one level
+                        if let Some(ref mut nav) = app.navigation {
+                            nav.drill_up();
+                            app.list_state.select(Some(0));
+                        }
+                    }
+                    KeyCode::Up => {
+                        if let Some(ref mut nav) = app.navigation {
+                            let current = nav.current();
+                            if !current.children.is_empty() {
+                                let selected = app.list_state.selected().unwrap_or(0);
+                                let new_selected = if selected > 0 {
+                                    selected - 1
+                                } else {
+                                    current.children.len() - 1
+                                };
+                                app.list_state.select(Some(new_selected));
+                            }
+                        }
+                    }
+                    KeyCode::Down => {
+                        if let Some(ref mut nav) = app.navigation {
+                            let current = nav.current();
+                            if !current.children.is_empty() {
+                                let selected = app.list_state.selected().unwrap_or(0);
+                                let new_selected = if selected < current.children.len() - 1 {
+                                    selected + 1
+                                } else {
+                                    0
+                                };
+                                app.list_state.select(Some(new_selected));
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -241,7 +356,7 @@ where
 // UI RENDERING
 // ============================================================================
 
-fn ui(f: &mut Frame, app: &App) {
+fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -257,7 +372,9 @@ fn ui(f: &mut Frame, app: &App) {
     // Content
     match &app.state {
         AppState::Scanning => render_scanning(f, chunks[1], app),
-        AppState::ViewingResults(root, report) => render_results(f, chunks[1], root, report),
+        AppState::ViewingResults(root, report) => {
+            render_results(f, chunks[1], root, report, &app.navigation, &mut app.list_state)
+        }
     }
 
     // Footer
@@ -329,8 +446,30 @@ fn render_scanning(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(paragraph, area);
 }
 
-fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport) {
-    let mut items = vec![ListItem::new(Line::from(vec![
+fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, navigation: &Option<NavigationState>, list_state: &mut ListState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Breadcrumb
+            Constraint::Length(1),  // Header row
+            Constraint::Min(0),     // List
+        ])
+        .split(area);
+
+    // Breadcrumb
+    let breadcrumb_text = navigation
+        .as_ref()
+        .map(|nav| nav.breadcrumb())
+        .unwrap_or_else(|| "Root".to_string());
+    
+    let breadcrumb = Paragraph::new(breadcrumb_text)
+        .block(Block::default().borders(Borders::ALL).title("Location"))
+        .style(Style::default().fg(Color::Cyan));
+    
+    f.render_widget(breadcrumb, chunks[0]);
+
+    // Header row (separate from list)
+    let header = Paragraph::new(Line::from(vec![
         Span::styled(
             format!("{:<50}", "Name"),
             Style::default().add_modifier(Modifier::BOLD),
@@ -339,9 +478,17 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport) {
             format!("{:>15}", "Size"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-    ]))];
+    ]));
+    f.render_widget(header, chunks[1]);
 
-    for child in root.children.iter().take(20) {
+    // List of items (only children, no header)
+    let current_node = navigation
+        .as_ref()
+        .map(|nav| nav.current())
+        .unwrap_or(root);
+
+    let mut items = Vec::new();
+    for child in &current_node.children {
         let size_str = format_size(child.size);
         let type_indicator = if child.is_dir { "📁" } else { "📄" };
         
@@ -355,14 +502,23 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport) {
     }
 
     let title = format!(
-        "Results | Total: {} | Skipped: {}",
+        "Results | Total: {} | Skipped: {} | Items: {}",
         format_size(root.size),
-        report.skipped.len()
+        report.skipped.len(),
+        current_node.children.len()
     );
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
 
-    f.render_widget(list, area);
+    f.render_stateful_widget(list, chunks[2], list_state);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -372,9 +528,15 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(" Quit "),
         ],
         AppState::ViewingResults(_, _) => vec![
+            Span::styled("↑/↓", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Navigate "),
+            Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" Drill Down "),
+            Span::styled("Backspace", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Go Up "),
             Span::styled("E", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::raw(" Export "),
-            Span::styled("Q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("Q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
             Span::raw(" Quit "),
         ],
     };
