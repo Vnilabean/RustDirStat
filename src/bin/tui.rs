@@ -506,17 +506,30 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
         ])
         .split(area);
 
+    // Calculate available width for the list (accounting for borders)
+    let available_width = area.width.saturating_sub(2) as usize; // Accounts for borders
+    
+    // Reserve space for size column,, need enough for largest formatted size with units
+    // "1234.56 GB" is 10 chars, but lets use 12 to be safe
+    let size_column_width = 12;
+    let name_column_width = available_width.saturating_sub(size_column_width + 1); // +1 for spacing
+    
+    // Ensure minimum widths
+    let size_column_width = size_column_width.max(10); // At least 10 for "1234.56 GB"
+    let name_column_width = name_column_width.max(10); // At least 10 for names
+    
     // Header row
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!("{:<30}", "Name"),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{:>15}", "Size"),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    let header_text = format!(
+        "{:<width$} {:>size_width$}",
+        "Name",
+        "Size",
+        width = name_column_width,
+        size_width = size_column_width
+    );
+    let header = Paragraph::new(Line::from(Span::styled(
+        header_text,
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
     f.render_widget(header, chunks[0]);
 
     // List of items
@@ -525,13 +538,85 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
         let size_str = format_size(child.size);
         let type_indicator = if child.is_dir { "📁" } else { "📄" };
         
-        items.push(ListItem::new(Line::from(vec![
-            Span::raw(format!("{} {:<27}", type_indicator, child.name)),
-            Span::styled(
-                format!("{:>15}", size_str),
-                Style::default().fg(Color::Green),
-            ),
-        ])));
+        let size_str_len = size_str.chars().count();
+        
+        let max_name_len = available_width
+            .saturating_sub(2)
+            .saturating_sub(1)
+            .saturating_sub(size_str_len);
+        
+        let max_name_len = max_name_len.max(1);
+        
+        // Truncate name if needed
+        let display_name = if child.name.chars().count() > max_name_len {
+            let truncated: String = child.name.chars().take(max_name_len.saturating_sub(3)).collect();
+            format!("{}...", truncated)
+        } else {
+            child.name.clone()
+        };
+        
+        // Build the line ensuring size_str (with units) is always visible
+        // Format: emoji + name + padding + size_str (with units)
+        let name_with_emoji = format!("{} {}", type_indicator, display_name);
+        
+        // Calculate maximum line length
+        // We'll truncate the name if needed, but NEVER truncate size_str
+        let max_line_len = available_width;
+        let size_str_bytes = size_str.len(); // size_str is ASCII, so bytes == chars
+        
+        // Calculate how much space we need for name + padding
+        // We MUST reserve size_str_bytes for the size (with units)
+        let max_name_bytes = max_line_len.saturating_sub(size_str_bytes).saturating_sub(1); 
+        
+        // Truncate name_with_emoji if it's too long (but preserve size_str)
+        let final_name = if name_with_emoji.len() > max_name_bytes {
+            // Truncate name to fit
+            let truncate_to = max_name_bytes.saturating_sub(3);
+            if truncate_to > 0 {
+                format!("{}...", &name_with_emoji[..truncate_to.min(name_with_emoji.len())])
+            } else {
+                name_with_emoji.chars().take(1).collect::<String>()
+            }
+        } else {
+            name_with_emoji
+        };
+        
+        // Calculate padding to right-align size_str
+        let final_name_len = final_name.len();
+        let padding_needed = max_line_len
+            .saturating_sub(final_name_len)
+            .saturating_sub(size_str_bytes);
+        
+        let padding = " ".repeat(padding_needed.max(1));
+        
+        // Build final line: name + padding + size_str
+        // size_str is ALWAYS at the end and NEVER truncated
+        let final_line = format!("{}{}{}", final_name, padding, size_str);
+        
+        // Verify size_str is at the end
+        if final_line.ends_with(&size_str) {
+            // Split for coloring
+            let split_point = final_line.len() - size_str_bytes;
+            let name_part = final_line[..split_point].to_string();
+            let size_part = final_line[split_point..].to_string();
+            
+            // Verify size_part equals size_str
+            if size_part == size_str {
+                items.push(ListItem::new(Line::from(vec![
+                    Span::raw(name_part),
+                    Span::styled(
+                        size_part,
+                        Style::default().fg(Color::Green),
+                    ),
+                ])));
+            } else {
+                // Fallback: show whole line
+                items.push(ListItem::new(Line::from(Span::raw(final_line))));
+            }
+        } else {
+            // Fallback: size_str not at end (shouldn't happen)
+            items.push(ListItem::new(Line::from(Span::raw(final_line))));
+        }
     }
 
     let title = format!("Tree View | {} items", current_node.children.len());
