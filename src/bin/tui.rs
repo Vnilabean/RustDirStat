@@ -284,7 +284,9 @@ where
                     KeyCode::Esc => {
                         // If in a subdirectory, go up; otherwise quit
                         if let Some(ref mut nav) = app.navigation {
-                            if !nav.drill_up() {
+                            if nav.drill_up() {
+                                app.list_state.select(Some(0));
+                            } else {
                                 app.should_quit = true;
                             }
                         } else {
@@ -601,10 +603,17 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
         
         // Truncate name_with_emoji if it's too long (but preserve size_str)
         let final_name = if name_with_emoji.len() > max_name_bytes {
-            // Truncate name to fit
+            // Truncate name to fit (safely handle UTF-8 multi-byte characters)
             let truncate_to = max_name_bytes.saturating_sub(3);
             if truncate_to > 0 {
-                format!("{}...", &name_with_emoji[..truncate_to.min(name_with_emoji.len())])
+                // Find the last character boundary before truncate_to bytes
+                let safe_truncate = name_with_emoji
+                    .char_indices()
+                    .take_while(|(idx, _)| *idx < truncate_to)
+                    .last()
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                format!("{}...", &name_with_emoji[..safe_truncate])
             } else {
                 name_with_emoji.chars().take(1).collect::<String>()
             }

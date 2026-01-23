@@ -265,7 +265,7 @@ ferris-scan "C:\"
 - [ ] Snapshot diffing (compare two scans)
 
 ### 🌐 Phase 4: Cross-Platform (v0.4)
-- [ ] Linux support
+- [ ] **FULL** Linux support (Currently partially supported)
 - [ ] macOS support
 - [ ] Network drive optimization
 
