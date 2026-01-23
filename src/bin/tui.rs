@@ -406,7 +406,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
-    let title = format!("ferris-scan TUI v0.1.0 | {}", app.scan_path.display());
+    let title = format!("ferris-scan TUI v{} | {}", env!("CARGO_PKG_VERSION"), app.scan_path.display());
     
     #[cfg(feature = "pro")]
     let version_tag = " [PRO] ";
@@ -606,12 +606,12 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
             // Truncate name to fit (safely handle UTF-8 multi-byte characters)
             let truncate_to = max_name_bytes.saturating_sub(3);
             if truncate_to > 0 {
-                // Find the last character boundary before truncate_to bytes
+                // Find the last character whose end position fits within truncate_to bytes
                 let safe_truncate = name_with_emoji
                     .char_indices()
-                    .take_while(|(idx, _)| *idx < truncate_to)
+                    .take_while(|(idx, c)| idx + c.len_utf8() <= truncate_to)
                     .last()
-                    .map(|(idx, _)| idx)
+                    .map(|(idx, c)| idx + c.len_utf8())
                     .unwrap_or(0);
                 format!("{}...", &name_with_emoji[..safe_truncate])
             } else {

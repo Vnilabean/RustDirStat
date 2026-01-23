@@ -192,9 +192,9 @@ impl eframe::App for FerrisScanApp {
 
             // Version badge
             #[cfg(feature = "pro")]
-            let version = "v0.1.0 [PRO]";
+            let version = format!("v{} [PRO]", env!("CARGO_PKG_VERSION"));
             #[cfg(not(feature = "pro"))]
-            let version = "v0.1.0 [FREE]";
+            let version = format!("v{} [FREE]", env!("CARGO_PKG_VERSION"));
 
             ui.label(version);
             ui.add_space(10.0);
