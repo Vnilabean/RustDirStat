@@ -311,7 +311,7 @@ where
                             app.list_state.select(Some(0));
                         }
                     }
-                    KeyCode::Up => {
+                    KeyCode::Up | KeyCode::Char('k') => {
                         if let Some(ref mut nav) = app.navigation {
                             let current = nav.current();
                             if !current.children.is_empty() {
@@ -325,7 +325,7 @@ where
                             }
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Char('j') => {
                         if let Some(ref mut nav) = app.navigation {
                             let current = nav.current();
                             if !current.children.is_empty() {
@@ -336,6 +336,23 @@ where
                                     0
                                 };
                                 app.list_state.select(Some(new_selected));
+                            }
+                        }
+                    }
+                    KeyCode::Char('h') => {
+                        // Go up one level (same as Backspace)
+                        if let Some(ref mut nav) = app.navigation {
+                            nav.drill_up();
+                            app.list_state.select(Some(0));
+                        }
+                    }
+                    KeyCode::Char('l') => {
+                        // Drill down into selected directory (same as Enter)
+                        if let Some(ref mut nav) = app.navigation {
+                            if let Some(selected) = app.list_state.selected() {
+                                if nav.drill_down(selected) {
+                                    app.list_state.select(Some(0));
+                                }
                             }
                         }
                     }
@@ -399,9 +416,11 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(version_tag)
-                .title_alignment(Alignment::Right),
+                .title_alignment(Alignment::Right)
+                .border_style(Style::default().fg(Color::LightGreen)),
         )
-        .alignment(Alignment::Center);
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::Cyan));
 
     f.render_widget(header, area);
 }
@@ -425,7 +444,7 @@ fn render_scanning(f: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled(
             "⟳ Scanning in progress...",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -439,7 +458,12 @@ fn render_scanning(f: &mut Frame, area: Rect, app: &App) {
     ];
 
     let paragraph = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Status")
+                .border_style(Style::default().fg(Color::Cyan))
+        )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
 
@@ -463,8 +487,13 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
         .unwrap_or_else(|| "Root".to_string());
     
     let breadcrumb = Paragraph::new(breadcrumb_text)
-        .block(Block::default().borders(Borders::ALL).title("Location"))
-        .style(Style::default().fg(Color::Cyan));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Location")
+                .border_style(Style::default().fg(Color::LightGreen))
+        )
+        .style(Style::default().fg(Color::LightCyan));
     
     f.render_widget(breadcrumb, main_chunks[0]);
 
@@ -528,7 +557,9 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     );
     let header = Paragraph::new(Line::from(Span::styled(
         header_text,
-        Style::default().add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD),
     )));
     f.render_widget(header, chunks[0]);
 
@@ -606,7 +637,7 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
                     Span::raw(name_part),
                     Span::styled(
                         size_part,
-                        Style::default().fg(Color::Green),
+                        Style::default().fg(Color::Cyan),
                     ),
                 ])));
             } else {
@@ -622,10 +653,15 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     let title = format!("Tree View | {} items", current_node.children.len());
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(Color::Cyan))
+        )
         .highlight_style(
             Style::default()
-                .bg(Color::Yellow)
+                .bg(Color::LightGreen)
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
@@ -641,7 +677,7 @@ fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, 
             Line::from(Span::styled(
                 "Selected Item Details",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::LightGreen)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -659,7 +695,7 @@ fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, 
                 Span::styled("Size: ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled(
                     format_size(item.size),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(Color::Cyan),
                 ),
             ]),
             Line::from(""),
@@ -668,7 +704,7 @@ fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, 
             ]),
             Line::from(Span::styled(
                 item.path.display().to_string(),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(Color::LightCyan),
             )),
             Line::from(""),
             if item.is_dir {
@@ -686,7 +722,7 @@ fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, 
             Line::from(Span::styled(
                 "No item selected",
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::ITALIC),
             )),
             Line::from(""),
@@ -697,7 +733,12 @@ fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, 
     };
 
     let details = Paragraph::new(details_text)
-        .block(Block::default().borders(Borders::ALL).title("Details"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Details")
+                .border_style(Style::default().fg(Color::LightGreen))
+        )
         .wrap(Wrap { trim: true });
 
     f.render_widget(details, area);
@@ -709,7 +750,7 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
         Line::from(Span::styled(
             "Scan Statistics",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -717,7 +758,7 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
             Span::styled("Total Size: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(
                 format_size(root.size),
-                Style::default().fg(Color::Green),
+                Style::default().fg(Color::Cyan),
             ),
         ]),
         Line::from(""),
@@ -729,7 +770,7 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
         Line::from(Span::styled(
             "Current Directory",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -742,7 +783,7 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
             Span::styled("Size: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(
                 format_size(current_node.size),
-                Style::default().fg(Color::Green),
+                Style::default().fg(Color::Cyan),
             ),
         ]),
         Line::from(""),
@@ -753,7 +794,12 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
     ];
 
     let stats = Paragraph::new(stats_text)
-        .block(Block::default().borders(Borders::ALL).title("Progress & Stats"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Progress & Stats")
+                .border_style(Style::default().fg(Color::Cyan))
+        )
         .wrap(Wrap { trim: true });
 
     f.render_widget(stats, area);
@@ -762,25 +808,29 @@ fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let key_hints = match &app.state {
         AppState::Scanning => vec![
-            Span::styled("Q", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::raw(" Quit "),
+            Span::styled("q", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::raw(": Quit"),
         ],
         AppState::ViewingResults(_, _) => vec![
+            Span::styled("q", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::raw(": Quit | "),
+            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(": Open | "),
+            Span::styled("Esc", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            Span::raw(": Back | "),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw(" Navigate "),
-            Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::raw(" Drill Down "),
-            Span::styled("Backspace", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::raw(" Go Up "),
-            Span::styled("E", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::raw(" Export "),
-            Span::styled("Q", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::raw(" Quit "),
+            Span::raw(" or "),
+            Span::styled("h/j/k/l", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(": Nav"),
         ],
     };
 
     let footer = Paragraph::new(Line::from(key_hints))
-        .block(Block::default().borders(Borders::ALL))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::LightGreen))
+        )
         .alignment(Alignment::Center);
 
     f.render_widget(footer, area);
@@ -792,12 +842,14 @@ fn render_popup(f: &mut Frame, message: &str) {
     let block = Block::default()
         .title(" Message ")
         .borders(Borders::ALL)
-        .style(Style::default().bg(Color::DarkGray));
+        .border_style(Style::default().fg(Color::LightGreen))
+        .style(Style::default().bg(Color::Black));
 
     let text = Paragraph::new(message)
         .block(block)
         .alignment(Alignment::Center)
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: true })
+        .style(Style::default().fg(Color::Cyan));
 
     f.render_widget(Clear, area);
     f.render_widget(text, area);
