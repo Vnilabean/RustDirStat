@@ -16,6 +16,9 @@
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://www.microsoft.com/windows)
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-💖-pink)](https://github.com/sponsors/vnilabean) 
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/vnilabean)
+
 [Installation](#-get-ferris-scan) •
 [Features](#-features) •
 [Benchmarks](#-benchmarks) •
@@ -120,7 +123,7 @@ Compile from source in 30 seconds:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ferris-scan.git
+git clone https://github.com/vnilabean/ferris-scan.git
 cd ferris-scan
 
 # Build TUI (Terminal Interface) - Free version
@@ -248,8 +251,8 @@ ferris-scan "C:\"
 - [x] Windows permission error handling
 
 ### 🚧 Phase 2: Enhanced UI (v0.2 - **In Progress**)
-- [ ] Tree navigation (drill down/up directories)
-- [ ] Multi-pane layout (tree + details + progress)
+- [x] Tree navigation (drill down/up directories)
+- [x] Multi-pane layout (tree + details + progress)
 - [ ] File deletion with confirmation modal
 - [ ] Sorting options (size/name/date)
 - [ ] Search/filter functionality
@@ -262,11 +265,11 @@ ferris-scan "C:\"
 - [ ] Snapshot diffing (compare two scans)
 
 ### 🌐 Phase 4: Cross-Platform (v0.4)
-- [ ] Linux support
+- [ ] **FULL** Linux support (Currently partially supported)
 - [ ] macOS support
 - [ ] Network drive optimization
 
-[Vote on features](https://github.com/yourusername/ferris-scan/discussions) | [Suggest new ones](https://github.com/yourusername/ferris-scan/issues/new)
+[Vote on features](https://github.com/vnilabean/ferris-scan/discussions) | [Suggest new ones](https://github.com/vnilabean/ferris-scan/issues/new)
 
 ---
 
@@ -306,7 +309,7 @@ I welcome contributions! This project thrives because of community input.
 ### Getting Started
 ```bash
 # Fork and clone the repo
-git clone https://github.com/yourusername/ferris-scan.git
+git clone https://github.com/vnilabean/ferris-scan.git
 cd ferris-scan
 
 # Make sure tests pass
@@ -320,7 +323,7 @@ cargo fmt
 ```
 
 ### Areas I Need Help With
-- 🐛 **Bug Reports:** Found an edge case? [Open an issue](https://github.com/yourusername/ferris-scan/issues)
+- 🐛 **Bug Reports:** Found an edge case? [Open an issue](https://github.com/vnilabean/ferris-scan/issues)
 - 📖 **Documentation:** Improve comments, examples, or guides
 - ⚡ **Performance:** Optimizations for specific hardware
 - 🎨 **UI/UX:** Make the TUI more intuitive
@@ -363,8 +366,8 @@ Inspired by:
 
 ## 📬 Contact & Support
 
-- **Issues & Bugs:** [GitHub Issues](https://github.com/yourusername/ferris-scan/issues)
-- **Feature Requests:** [GitHub Discussions](https://github.com/yourusername/ferris-scan/discussions)
+- **Issues & Bugs:** [GitHub Issues](https://github.com/vnilabean/ferris-scan/issues)
+- **Feature Requests:** [GitHub Discussions](https://github.com/vnilabean/ferris-scan/discussions)
 
 ---
 

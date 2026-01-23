@@ -36,10 +36,54 @@ enum ScanStatus {
     Error(String),
 }
 
+/// Navigation state for tree browsing
+struct NavigationState {
+    /// Stack of nodes from root to current directory
+    path: Vec<Node>,
+}
+
+impl NavigationState {
+    fn new(root: Node) -> Self {
+        Self {
+            path: vec![root],
+        }
+    }
+
+    /// Get the current node being viewed
+    fn current(&self) -> &Node {
+        self.path.last().unwrap()
+    }
+
+    /// Get breadcrumb path as a string
+    fn breadcrumb(&self) -> String {
+        self.path
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
+    /// Navigate into a child directory
+    fn drill_down(&mut self, child: Node) {
+        self.path.push(child);
+    }
+
+    /// Navigate up to parent directory
+    fn drill_up(&mut self) -> bool {
+        if self.path.len() > 1 {
+            self.path.pop();
+            return true;
+        }
+        false
+    }
+}
+
 struct FerrisScanApp {
     scan_path: String,
     status: Arc<Mutex<ScanStatus>>,
     popup_message: Option<String>,
+    navigation: Option<NavigationState>,
+    selected_index: usize,
 }
 
 impl FerrisScanApp {
@@ -48,6 +92,8 @@ impl FerrisScanApp {
             scan_path: initial_path.display().to_string(),
             status: Arc::new(Mutex::new(ScanStatus::Idle)),
             popup_message: None,
+            navigation: None,
+            selected_index: 0,
         }
     }
 
@@ -81,7 +127,12 @@ impl FerrisScanApp {
 
             // Update status with result
             let new_status = match result {
-                Ok((root, report)) => ScanStatus::Done { root, report },
+                Ok((root, report)) => {
+                    // Initialize navigation with root
+                    // Note: We need to pass this to the app, but we can't easily do that here
+                    // So we'll initialize it when the status is read
+                    ScanStatus::Done { root, report }
+                }
                 Err(e) => ScanStatus::Error(e.to_string()),
             };
 
@@ -131,6 +182,8 @@ impl eframe::App for FerrisScanApp {
         let mut should_start_scan = false;
         let mut should_export = false;
         let mut should_reset = false;
+        let mut should_drill_up = false;
+        let mut should_drill_down: Option<Node> = None;
         let mut root_for_export: Option<Node> = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -139,9 +192,9 @@ impl eframe::App for FerrisScanApp {
 
             // Version badge
             #[cfg(feature = "pro")]
-            let version = "v0.1.0 [PRO]";
+            let version = format!("v{} [PRO]", env!("CARGO_PKG_VERSION"));
             #[cfg(not(feature = "pro"))]
-            let version = "v0.1.0 [FREE]";
+            let version = format!("v{} [FREE]", env!("CARGO_PKG_VERSION"));
 
             ui.label(version);
             ui.add_space(10.0);
@@ -186,31 +239,144 @@ impl eframe::App for FerrisScanApp {
                     }
                 }
                 ScanStatus::Done { root, report } => {
-                    ui.label(format!("✓ Scan complete!"));
-                    ui.label(format!("Total size: {}", format_size(root.size)));
-                    ui.label(format!("Skipped entries: {}", report.skipped.len()));
-                    ui.add_space(10.0);
+                    // Initialize navigation if not already done
+                    if self.navigation.is_none() {
+                        self.navigation = Some(NavigationState::new(root.clone()));
+                        self.selected_index = 0;
+                    }
 
-                    // Top entries
-                    ui.heading("Top Entries (by size)");
+                    // Breadcrumb navigation
+                    let breadcrumb = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.breadcrumb())
+                        .unwrap_or_else(|| "Root".to_string());
+                    let can_go_up = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.path.len() > 1)
+                        .unwrap_or(false);
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Location:");
+                        ui.label(egui::RichText::new(&breadcrumb).color(egui::Color32::from_rgb(100, 200, 255)));
+                        
+                        if can_go_up {
+                            if ui.button("← Go Up").clicked() {
+                                should_drill_up = true;
+                            }
+                        }
+                    });
                     ui.separator();
 
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for child in root.children.iter().take(20) {
-                                let icon = if child.is_dir { "📁" } else { "📄" };
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("{} {}", icon, child.name));
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(format_size(child.size));
-                                        },
-                                    );
+                    // Current directory entries
+                    let current_node = self.navigation
+                        .as_ref()
+                        .map(|nav| nav.current())
+                        .unwrap_or(root);
+
+                    // Ensure selected_index is valid
+                    if self.selected_index >= current_node.children.len() && !current_node.children.is_empty() {
+                        self.selected_index = current_node.children.len() - 1;
+                    }
+
+                    // Multi-pane layout: Tree | Details | Stats
+                    ui.horizontal(|ui| {
+                        // Tree pane (left)
+                        ui.vertical(|ui| {
+                            ui.heading("Tree View");
+                            ui.separator();
+                            
+                            egui::ScrollArea::vertical()
+                                .max_height(400.0)
+                                .show(ui, |ui| {
+                                    for (idx, child) in current_node.children.iter().enumerate() {
+                                        let icon = if child.is_dir { "📁" } else { "📄" };
+                                        let is_selected = idx == self.selected_index;
+                                        
+                                        ui.horizontal(|ui| {
+                                            let label_text = format!("{} {}", icon, child.name);
+                                            
+                                            // Highlight selected item
+                                            if is_selected {
+                                                ui.visuals_mut().selection.bg_fill = egui::Color32::from_rgb(255, 255, 0);
+                                            }
+                                            
+                                            let response = if child.is_dir {
+                                                ui.selectable_label(is_selected, label_text)
+                                            } else {
+                                                ui.selectable_label(is_selected, label_text)
+                                            };
+                                            
+                                            if response.clicked() {
+                                                self.selected_index = idx;
+                                                if child.is_dir {
+                                                    should_drill_down = Some(child.clone());
+                                                }
+                                            }
+                                            
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.label(format_size(child.size));
+                                                },
+                                            );
+                                        });
+                                    }
                                 });
+                        });
+
+                        ui.separator();
+
+                        // Details pane (middle)
+                        ui.vertical(|ui| {
+                            ui.heading("Details");
+                            ui.separator();
+                            
+                            if let Some(selected_item) = current_node.children.get(self.selected_index) {
+                                ui.label(egui::RichText::new("Selected Item Details").heading().color(egui::Color32::from_rgb(100, 200, 255)));
+                                ui.add_space(5.0);
+                                
+                                ui.label(format!("Name: {}", selected_item.name));
+                                ui.label(format!("Type: {}", if selected_item.is_dir { "Directory" } else { "File" }));
+                                ui.label(format!("Size: {}", format_size(selected_item.size)));
+                                ui.add_space(5.0);
+                                
+                                ui.label(egui::RichText::new("Path:").strong());
+                                ui.label(egui::RichText::new(selected_item.path.display().to_string()).color(egui::Color32::from_rgb(255, 255, 0)));
+                                
+                                if selected_item.is_dir {
+                                    ui.add_space(5.0);
+                                    ui.label(format!("Children: {} items", selected_item.children.len()));
+                                }
+                            } else {
+                                ui.label(egui::RichText::new("No item selected").italics().color(egui::Color32::GRAY));
+                                ui.add_space(5.0);
+                                ui.label("Click an item in the tree to view details.");
                             }
                         });
+
+                        ui.separator();
+
+                        // Stats pane (right)
+                        ui.vertical(|ui| {
+                            ui.heading("Progress & Stats");
+                            ui.separator();
+                            
+                            ui.label(egui::RichText::new("Scan Statistics").heading().color(egui::Color32::from_rgb(100, 200, 255)));
+                            ui.add_space(5.0);
+                            
+                            ui.label(format!("Total Size: {}", format_size(root.size)));
+                            ui.label(format!("Skipped: {} entries", report.skipped.len()));
+                            
+                            ui.add_space(10.0);
+                            
+                            ui.label(egui::RichText::new("Current Directory").heading().color(egui::Color32::from_rgb(100, 200, 255)));
+                            ui.add_space(5.0);
+                            
+                            ui.label(format!("Name: {}", current_node.name));
+                            ui.label(format!("Size: {}", format_size(current_node.size)));
+                            ui.label(format!("Items: {}", current_node.children.len()));
+                        });
+                    });
 
                     ui.add_space(10.0);
 
@@ -248,6 +414,20 @@ impl eframe::App for FerrisScanApp {
         }
         if should_reset {
             *self.status.lock().unwrap() = ScanStatus::Idle;
+            self.navigation = None;
+            self.selected_index = 0;
+        }
+        if should_drill_up {
+            if let Some(ref mut nav) = self.navigation {
+                nav.drill_up();
+                self.selected_index = 0;
+            }
+        }
+        if let Some(child) = should_drill_down {
+            if let Some(ref mut nav) = self.navigation {
+                nav.drill_down(child);
+                self.selected_index = 0;
+            }
         }
 
         // Popup modal

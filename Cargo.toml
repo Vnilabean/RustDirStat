@@ -1,6 +1,6 @@
 [package]
 name = "ferris-scan"
-version = "0.1.0"
+version = "0.15.0"
 edition = "2021"
 authors = ["vnilabean"]
 description = "A blazingly fast disk usage analyzer written in Rust"
