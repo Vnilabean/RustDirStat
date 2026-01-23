@@ -447,12 +447,12 @@ fn render_scanning(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, navigation: &Option<NavigationState>, list_state: &mut ListState) {
-    let chunks = Layout::default()
+    // First split: breadcrumb at top, content below
+    let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),  // Breadcrumb
-            Constraint::Length(1),  // Header row
-            Constraint::Min(0),     // List
+            Constraint::Min(0),     // Multi-pane content
         ])
         .split(area);
 
@@ -466,12 +466,50 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
         .block(Block::default().borders(Borders::ALL).title("Location"))
         .style(Style::default().fg(Color::Cyan));
     
-    f.render_widget(breadcrumb, chunks[0]);
+    f.render_widget(breadcrumb, main_chunks[0]);
 
-    // Header row (separate from list)
+    // Multi-pane layout: Tree | Details | Progress
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40),  // Tree view
+            Constraint::Percentage(35), // Details view
+            Constraint::Percentage(25), // Progress/Stats view
+        ])
+        .split(main_chunks[1]);
+
+    // Get current node and selected item
+    let current_node = navigation
+        .as_ref()
+        .map(|nav| nav.current())
+        .unwrap_or(root);
+    
+    let selected_index = list_state.selected().unwrap_or(0);
+    let selected_item = current_node.children.get(selected_index);
+
+    // Render tree pane (left)
+    render_tree_pane(f, panes[0], current_node, list_state);
+
+    // Render details pane (middle)
+    render_details_pane(f, panes[1], selected_item, current_node);
+
+    // Render progress/stats pane (right)
+    render_stats_pane(f, panes[2], root, report, current_node);
+}
+
+fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: &mut ListState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),  // Header row
+            Constraint::Min(0),     // List
+        ])
+        .split(area);
+
+    // Header row
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!("{:<50}", "Name"),
+            format!("{:<30}", "Name"),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -479,21 +517,16 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]));
-    f.render_widget(header, chunks[1]);
+    f.render_widget(header, chunks[0]);
 
-    // List of items (only children, no header)
-    let current_node = navigation
-        .as_ref()
-        .map(|nav| nav.current())
-        .unwrap_or(root);
-
+    // List of items
     let mut items = Vec::new();
     for child in &current_node.children {
         let size_str = format_size(child.size);
         let type_indicator = if child.is_dir { "📁" } else { "📄" };
         
         items.push(ListItem::new(Line::from(vec![
-            Span::raw(format!("{} {:<47}", type_indicator, child.name)),
+            Span::raw(format!("{} {:<27}", type_indicator, child.name)),
             Span::styled(
                 format!("{:>15}", size_str),
                 Style::default().fg(Color::Green),
@@ -501,12 +534,7 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
         ])));
     }
 
-    let title = format!(
-        "Results | Total: {} | Skipped: {} | Items: {}",
-        format_size(root.size),
-        report.skipped.len(),
-        current_node.children.len()
-    );
+    let title = format!("Tree View | {} items", current_node.children.len());
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
@@ -518,7 +546,132 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
         )
         .highlight_symbol("> ");
 
-    f.render_stateful_widget(list, chunks[2], list_state);
+    f.render_stateful_widget(list, chunks[1], list_state);
+}
+
+fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, current_node: &Node) {
+    let details_text = if let Some(item) = selected_item {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Selected Item Details",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(&item.name),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Type: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(if item.is_dir { "Directory" } else { "File" }),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Size: ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format_size(item.size),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Path: ", Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(Span::styled(
+                item.path.display().to_string(),
+                Style::default().fg(Color::Yellow),
+            )),
+            Line::from(""),
+            if item.is_dir {
+                Line::from(vec![
+                    Span::styled("Children: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(format!("{} items", item.children.len())),
+                ])
+            } else {
+                Line::from("")
+            },
+        ]
+    } else {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "No item selected",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )),
+            Line::from(""),
+            Line::from("Use ↑/↓ to navigate"),
+            Line::from("and select an item"),
+            Line::from("to view details."),
+        ]
+    };
+
+    let details = Paragraph::new(details_text)
+        .block(Block::default().borders(Borders::ALL).title("Details"))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(details, area);
+}
+
+fn render_stats_pane(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, current_node: &Node) {
+    let stats_text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Scan Statistics",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Total Size: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format_size(root.size),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Skipped: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!("{} entries", report.skipped.len())),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Current Directory",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Name: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&current_node.name),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Size: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format_size(current_node.size),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Items: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!("{}", current_node.children.len())),
+        ]),
+    ];
+
+    let stats = Paragraph::new(stats_text)
+        .block(Block::default().borders(Borders::ALL).title("Progress & Stats"))
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(stats, area);
 }
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {

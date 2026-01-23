@@ -252,7 +252,7 @@ ferris-scan "C:\"
 
 ### 🚧 Phase 2: Enhanced UI (v0.2 - **In Progress**)
 - [x] Tree navigation (drill down/up directories)
-- [ ] Multi-pane layout (tree + details + progress)
+- [x] Multi-pane layout (tree + details + progress)
 - [ ] File deletion with confirmation modal
 - [ ] Sorting options (size/name/date)
 - [ ] Search/filter functionality
