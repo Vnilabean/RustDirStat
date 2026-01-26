@@ -20,7 +20,7 @@ use std::{
 };
 
 // ============================================================================
-// APPLICATION STATE
+// TYPES
 // ============================================================================
 
 enum ScanStatus {
@@ -41,6 +41,18 @@ struct NavigationState {
     /// Stack of nodes from root to current directory
     path: Vec<Node>,
 }
+
+struct FerrisScanApp {
+    scan_path: String,
+    status: Arc<Mutex<ScanStatus>>,
+    popup_message: Option<String>,
+    navigation: Option<NavigationState>,
+    selected_index: usize,
+}
+
+// ============================================================================
+// IMPLEMENTATIONS
+// ============================================================================
 
 impl NavigationState {
     fn new(root: Node) -> Self {
@@ -78,14 +90,6 @@ impl NavigationState {
     }
 }
 
-struct FerrisScanApp {
-    scan_path: String,
-    status: Arc<Mutex<ScanStatus>>,
-    popup_message: Option<String>,
-    navigation: Option<NavigationState>,
-    selected_index: usize,
-}
-
 impl FerrisScanApp {
     fn new(initial_path: PathBuf) -> Self {
         Self {
@@ -100,7 +104,6 @@ impl FerrisScanApp {
     fn start_scan(&mut self) {
         let path = PathBuf::from(&self.scan_path);
         
-        // Validate path
         if !path.exists() {
             self.popup_message = Some(format!("Path does not exist: {}", path.display()));
             return;
@@ -109,13 +112,11 @@ impl FerrisScanApp {
         let progress = Arc::new(SharedProgress::default());
         let done_flag = Arc::new(AtomicBool::new(false));
 
-        // Update status to scanning
         *self.status.lock().unwrap() = ScanStatus::Scanning {
             progress: Arc::clone(&progress),
             done_flag: Arc::clone(&done_flag),
         };
 
-        // Spawn scan thread
         let status_clone = Arc::clone(&self.status);
         let progress_clone = Arc::clone(&progress);
         let done_flag_clone = Arc::clone(&done_flag);
@@ -125,12 +126,8 @@ impl FerrisScanApp {
             let result = scanner.scan_with_progress(&path, progress_clone);
             done_flag_clone.store(true, Ordering::Relaxed);
 
-            // Update status with result
             let new_status = match result {
                 Ok((root, report)) => {
-                    // Initialize navigation with root
-                    // Note: We need to pass this to the app, but we can't easily do that here
-                    // So we'll initialize it when the status is read
                     ScanStatus::Done { root, report }
                 }
                 Err(e) => ScanStatus::Error(e.to_string()),
@@ -175,10 +172,8 @@ impl FerrisScanApp {
 
 impl eframe::App for FerrisScanApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Request repaint for progress updates
         ctx.request_repaint();
 
-        // Track user actions to apply after rendering
         let mut should_start_scan = false;
         let mut should_export = false;
         let mut should_reset = false;
@@ -190,7 +185,6 @@ impl eframe::App for FerrisScanApp {
             ui.heading("🦀 ferris-scan GUI");
             ui.add_space(10.0);
 
-            // Version badge
             #[cfg(feature = "pro")]
             let version = format!("v{} [PRO]", env!("CARGO_PKG_VERSION"));
             #[cfg(not(feature = "pro"))]
@@ -199,7 +193,6 @@ impl eframe::App for FerrisScanApp {
             ui.label(version);
             ui.add_space(10.0);
 
-            // Path input
             ui.horizontal(|ui| {
                 ui.label("Path:");
                 ui.text_edit_singleline(&mut self.scan_path);
@@ -207,7 +200,6 @@ impl eframe::App for FerrisScanApp {
 
             ui.add_space(10.0);
 
-            // Status display and controls
             let status = self.status.lock().unwrap();
             match &*status {
                 ScanStatus::Idle => {
@@ -233,19 +225,16 @@ impl eframe::App for FerrisScanApp {
                     ui.label("Current path:");
                     ui.label(last_path);
 
-                    // Check if done
                     if done_flag.load(Ordering::Relaxed) {
                         ctx.request_repaint();
                     }
                 }
                 ScanStatus::Done { root, report } => {
-                    // Initialize navigation if not already done
                     if self.navigation.is_none() {
                         self.navigation = Some(NavigationState::new(root.clone()));
                         self.selected_index = 0;
                     }
 
-                    // Breadcrumb navigation
                     let breadcrumb = self.navigation
                         .as_ref()
                         .map(|nav| nav.breadcrumb())
@@ -267,13 +256,11 @@ impl eframe::App for FerrisScanApp {
                     });
                     ui.separator();
 
-                    // Current directory entries
                     let current_node = self.navigation
                         .as_ref()
                         .map(|nav| nav.current())
                         .unwrap_or(root);
 
-                    // Ensure selected_index is valid
                     if self.selected_index >= current_node.children.len() && !current_node.children.is_empty() {
                         self.selected_index = current_node.children.len() - 1;
                     }
@@ -295,7 +282,6 @@ impl eframe::App for FerrisScanApp {
                                         ui.horizontal(|ui| {
                                             let label_text = format!("{} {}", icon, child.name);
                                             
-                                            // Highlight selected item
                                             if is_selected {
                                                 ui.visuals_mut().selection.bg_fill = egui::Color32::from_rgb(255, 255, 0);
                                             }
@@ -380,7 +366,6 @@ impl eframe::App for FerrisScanApp {
 
                     ui.add_space(10.0);
 
-                    // Action buttons
                     ui.horizontal(|ui| {
                         if ui.button("Export CSV").clicked() {
                             should_export = true;
@@ -403,7 +388,6 @@ impl eframe::App for FerrisScanApp {
             }
         });
 
-        // Apply actions after releasing lock
         if should_start_scan {
             self.start_scan();
         }
@@ -430,7 +414,6 @@ impl eframe::App for FerrisScanApp {
             }
         }
 
-        // Popup modal
         let popup_msg = self.popup_message.clone();
         if let Some(message) = popup_msg {
             let mut should_close = false;
@@ -451,27 +434,6 @@ impl eframe::App for FerrisScanApp {
                 self.popup_message = None;
             }
         }
-    }
-}
-
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-fn format_size(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut unit_idx = 0;
-
-    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_idx += 1;
-    }
-
-    if unit_idx == 0 {
-        format!("{} {}", bytes, UNITS[unit_idx])
-    } else {
-        format!("{:.2} {}", size, UNITS[unit_idx])
     }
 }
 
@@ -499,4 +461,25 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|_cc| Ok(Box::new(FerrisScanApp::new(initial_path)))),
     )
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+fn format_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_idx = 0;
+
+    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_idx += 1;
+    }
+
+    if unit_idx == 0 {
+        format!("{} {}", bytes, UNITS[unit_idx])
+    } else {
+        format!("{:.2} {}", size, UNITS[unit_idx])
+    }
 }

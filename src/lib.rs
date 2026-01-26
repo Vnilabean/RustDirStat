@@ -26,13 +26,12 @@ use std::time::Instant;
 
 use jwalk::WalkDir;
 
-// Pro only imports (conditional compilation)
 #[cfg(feature = "pro")]
 use serde::Serialize;
 
-
-
-
+// ============================================================================
+// TYPES
+// ============================================================================
 
 /// Represents a file or directory node in the filesystem tree
 #[derive(Debug, Clone)]
@@ -46,42 +45,6 @@ pub struct Node {
     pub path: PathBuf,
 }
 
-
-
-
-
-impl Node {
-    pub fn new(name: String, path: PathBuf, is_dir: bool) -> Self {
-        Self {
-            name,
-            path,
-            is_dir,
-            size: 0,
-            children: Vec::new(),
-        }
-    }
-}
-
-impl Ord for Node {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.size.cmp(&self.size) // Sort descending by size
-    }
-}
-
-impl PartialOrd for Node {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Node {
-    fn eq(&self, other: &Self) -> bool {
-        self.size == other.size && self.name == other.name
-    }
-}
-
-impl Eq for Node {}
-
 /// Progress update sent during scanning
 #[derive(Debug, Clone)]
 pub struct ScanProgress {
@@ -89,8 +52,6 @@ pub struct ScanProgress {
     pub current_path: PathBuf,
     pub elapsed: std::time::Duration,
 }
-
-
 
 /// Shared progress state for tick-based UIs.
 ///
@@ -116,6 +77,191 @@ pub struct SkippedEntry {
 pub struct ScanReport {
     pub skipped: Vec<SkippedEntry>,
 }
+
+/// Represents the current state of a scan operation.
+/// 
+/// Frontends (TUI/GUI) can poll this to update their UI accordingly.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScanState {
+    /// No scan is currently running
+    Idle,
+    /// Scan is in progress with current statistics
+    Scanning {
+        files_scanned: u64,
+        current_path: Option<PathBuf>,
+    },
+    /// Scan completed successfully with results
+    Done {
+        root: Node,
+        report: ScanReport,
+    },
+    /// Scan failed with error message
+    Error(String),
+}
+
+/// High-performance disk usage scanner
+/// 
+/// This is the main interface for scanning directories. Use this instead of
+/// the lower-level `scan_directory` functions for better encapsulation.
+/// 
+/// # Multi-Frontend Architecture
+/// 
+/// This Scanner is designed to be used by multiple frontends (TUI, GUI, etc.).
+/// It provides both blocking and progress-based scanning methods.
+#[derive(Debug, Default)]
+pub struct Scanner {
+    // TODO: Future: Add configuration options here (filters, exclusions, etc.)
+}
+
+// ============================================================================
+// IMPLEMENTATIONS
+// ============================================================================
+
+impl Node {
+    pub fn new(name: String, path: PathBuf, is_dir: bool) -> Self {
+        Self {
+            name,
+            path,
+            is_dir,
+            size: 0,
+            children: Vec::new(),
+        }
+    }
+}
+
+impl Ord for Node {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.size.cmp(&self.size)
+    }
+}
+
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.size == other.size && self.name == other.name
+    }
+}
+
+impl Eq for Node {}
+
+impl Default for ScanState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl Scanner {
+    /// Create a new Scanner instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Scan a directory and return the root node with all children
+    /// 
+    /// # Arguments
+    /// * `path` - The directory path to scan
+    /// 
+    /// # Returns
+    /// * `Ok(Node)` - The root node containing the entire tree
+    /// * `Err(anyhow::Error)` - If scanning fails
+    /// 
+    /// # Example
+    /// ```no_run
+    /// use ferris_scan::Scanner;
+    /// use std::path::Path;
+    /// 
+    /// let scanner = Scanner::new();
+    /// let result = scanner.scan(Path::new("C:/")).unwrap();
+    /// println!("Total size: {} bytes", result.size);
+    /// ```
+    pub fn scan<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<Node> {
+        let (root, _report) = scan_directory_with_report_shared(path, None, None)?;
+        Ok(root)
+    }
+
+    /// Scan with progress reporting
+    pub fn scan_with_progress<P: AsRef<Path>>(
+        &self,
+        path: P,
+        shared_progress: Arc<SharedProgress>,
+    ) -> anyhow::Result<(Node, ScanReport)> {
+        scan_directory_with_report_shared(path, None, Some(shared_progress))
+    }
+
+    /// Export scan results to CSV format (Pro feature only)
+    /// 
+    /// This function is only available when compiled with `--features pro`.
+    /// 
+    /// # Arguments
+    /// * `root` - The root node to export
+    /// * `output_path` - Path where the CSV file will be written
+    /// 
+    /// # Returns
+    /// * `Ok(())` - If export succeeds
+    /// * `Err(anyhow::Error)` - If export fails
+    /// 
+    /// # Pro Feature
+    /// This method is only available in the Pro version.
+    /// 
+    /// # Example
+    /// ```no_run
+    /// # #[cfg(feature = "pro")]
+    /// # {
+    /// use ferris_scan::Scanner;
+    /// use std::path::Path;
+    /// 
+    /// let scanner = Scanner::new();
+    /// let result = scanner.scan(Path::new("C:/")).unwrap();
+    /// scanner.export_csv(&result, Path::new("output.csv")).unwrap();
+    /// # }
+    /// ```
+    #[cfg(feature = "pro")]
+    pub fn export_csv<P: AsRef<Path>>(&self, root: &Node, output_path: P) -> anyhow::Result<()> {
+        use std::fs::File;
+
+        let file = File::create(output_path)?;
+        let mut writer = csv::Writer::from_writer(file);
+
+        writer.write_record(["Path", "Name", "Type", "Size (bytes)"])?;
+        self.write_node_csv(&mut writer, root, &PathBuf::new())?;
+
+        writer.flush()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "pro")]
+    fn write_node_csv(
+        &self,
+        writer: &mut csv::Writer<std::fs::File>,
+        node: &Node,
+        parent_path: &Path,
+    ) -> anyhow::Result<()> {
+        let current_path = parent_path.join(&node.name);
+        let node_type = if node.is_dir { "Directory" } else { "File" };
+
+        writer.write_record(&[
+            current_path.display().to_string(),
+            node.name.clone(),
+            node_type.to_string(),
+            node.size.to_string(),
+        ])?;
+
+        for child in &node.children {
+            self.write_node_csv(writer, child, &current_path)?;
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// PUBLIC API
+// ============================================================================
 
 /// Scan a directory and build a tree structure of disk usage
 pub fn scan_directory<P: AsRef<Path>>(
@@ -143,7 +289,6 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
     let root_path = root.as_ref().to_path_buf();
     let mut report = ScanReport::default();
 
-    // Build tree structure
     let mut root_node = Node::new(
         root_path.file_name()
             .and_then(|n| n.to_str())
@@ -153,7 +298,6 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
         true,
     );
 
-    // Stream entries via jwalk 
     let mut files_scanned: usize = 0;
     for entry in WalkDir::new(&root_path).sort(true) {
         match entry {
@@ -170,7 +314,6 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
                 }
 
                 if let Some(ref tx) = progress_tx {
-                    // Keep progress lightweight; update count for files only.
                     let _ = tx.send(ScanProgress {
                         files_scanned,
                         current_path: path.to_path_buf(),
@@ -188,7 +331,6 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
                     continue;
                 }
 
-                // For files, use metadata length as size.
                 let md = match entry.metadata() {
                     Ok(md) => md,
                     Err(e) => {
@@ -208,7 +350,6 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
                 add_file_to_tree(&mut root_node, relative, md.len());
             }
             Err(e) => {
-                // Windows gotcha: permission denied (System Volume Information, etc.)
                 if is_permission_denied(&e) {
                     report.skipped.push(SkippedEntry {
                         path: None,
@@ -220,14 +361,15 @@ pub fn scan_directory_with_report_shared<P: AsRef<Path>>(
         }
     }
 
-    // Calculate directory sizes as sum(children) for dirs.
     calculate_dir_sizes(&mut root_node);
-    
-    // Sort children by size
     sort_tree(&mut root_node);
     
     Ok((root_node, report))
 }
+
+// ============================================================================
+// INTERNAL HELPERS
+// ============================================================================
 
 fn is_permission_denied(e: &jwalk::Error) -> bool {
     use std::io::ErrorKind;
@@ -271,7 +413,7 @@ fn add_file_to_tree(root: &mut Node, path: &Path, size: u64) {
                 current.children.push(Node::new(
                     name.clone(),
                     current.path.join(&name),
-                    !is_leaf, // dirs for intermediate components
+                    !is_leaf,
                 ));
                 current.children.len() - 1
             }
@@ -308,196 +450,9 @@ fn sort_tree(node: &mut Node) {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // ============================================================================
-// SCAN STATE (For Frontend Polling)
+// TESTS
 // ============================================================================
-
-/// Represents the current state of a scan operation.
-/// 
-/// Frontends (TUI/GUI) can poll this to update their UI accordingly.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ScanState {
-    /// No scan is currently running
-    Idle,
-    /// Scan is in progress with current statistics
-    Scanning {
-        files_scanned: u64,
-        current_path: Option<PathBuf>,
-    },
-    /// Scan completed successfully with results
-    Done {
-        root: Node,
-        report: ScanReport,
-    },
-    /// Scan failed with error message
-    Error(String),
-}
-
-impl Default for ScanState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
-// ============================================================================
-// SCANNER API (Primary Interface)
-// ============================================================================
-
-/// High-performance disk usage scanner
-/// 
-/// This is the main interface for scanning directories. Use this instead of
-/// the lower-level `scan_directory` functions for better encapsulation.
-/// 
-/// # Multi-Frontend Architecture
-/// 
-/// This Scanner is designed to be used by multiple frontends (TUI, GUI, etc.).
-/// It provides both blocking and progress-based scanning methods.
-#[derive(Debug, Default)]
-pub struct Scanner {
-    // TODO: Future: Add configuration options here (filters, exclusions, etc.)
-}
-
-impl Scanner {
-    /// Create a new Scanner instance
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Scan a directory and return the root node with all children
-    /// 
-    /// # Arguments
-    /// * `path` - The directory path to scan
-    /// 
-    /// # Returns
-    /// * `Ok(Node)` - The root node containing the entire tree
-    /// * `Err(anyhow::Error)` - If scanning fails
-    /// 
-    /// # Example
-    /// ```no_run
-    /// use ferris_scan::Scanner;
-    /// use std::path::Path;
-    /// 
-    /// let scanner = Scanner::new();
-    /// let result = scanner.scan(Path::new("C:/")).unwrap();
-    /// println!("Total size: {} bytes", result.size);
-    /// ```
-    pub fn scan<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<Node> {
-        let (root, _report) = scan_directory_with_report_shared(path, None, None)?;
-        Ok(root)
-    }
-
-    /// Scan with progress reporting
-    pub fn scan_with_progress<P: AsRef<Path>>(
-        &self,
-        path: P,
-        shared_progress: Arc<SharedProgress>,
-    ) -> anyhow::Result<(Node, ScanReport)> {
-        scan_directory_with_report_shared(path, None, Some(shared_progress))
-    }
-
-
-
-
-
-
-
-
-
-
-
-    // ========================================================================
-    // PRO FEATURE: Data Export
-    // ========================================================================
-    // This method is only compiled when the 'pro' feature is enabled.
-    // In the free version, this method does not exist.
-    // ========================================================================
-
-    /// Export scan results to CSV format (Pro feature only)
-    /// 
-    /// This function is only available when compiled with `--features pro`.
-    /// 
-    /// # Arguments
-    /// * `root` - The root node to export
-    /// * `output_path` - Path where the CSV file will be written
-    /// 
-    /// # Returns
-    /// * `Ok(())` - If export succeeds
-    /// * `Err(anyhow::Error)` - If export fails
-    /// 
-    /// # Pro Feature
-    /// This method is only available in the Pro version.
-    /// 
-    /// # Example
-    /// ```no_run
-    /// # #[cfg(feature = "pro")]
-    /// # {
-    /// use ferris_scan::Scanner;
-    /// use std::path::Path;
-    /// 
-    /// let scanner = Scanner::new();
-    /// let result = scanner.scan(Path::new("C:/")).unwrap();
-    /// scanner.export_csv(&result, Path::new("output.csv")).unwrap();
-    /// # }
-    /// ```
-    #[cfg(feature = "pro")]
-    pub fn export_csv<P: AsRef<Path>>(&self, root: &Node, output_path: P) -> anyhow::Result<()> {
-        use std::fs::File;
-
-        let file = File::create(output_path)?;
-        let mut writer = csv::Writer::from_writer(file);
-
-        // Write header
-        writer.write_record(["Path", "Name", "Type", "Size (bytes)"])?;
-
-        // Flatten the tree and write each node
-        self.write_node_csv(&mut writer, root, &PathBuf::new())?;
-
-        writer.flush()?;
-        Ok(())
-    }
-
-    #[cfg(feature = "pro")]
-    fn write_node_csv(
-        &self,
-        writer: &mut csv::Writer<std::fs::File>,
-        node: &Node,
-        parent_path: &Path,
-    ) -> anyhow::Result<()> {
-        let current_path = parent_path.join(&node.name);
-        let node_type = if node.is_dir { "Directory" } else { "File" };
-
-        writer.write_record(&[
-            current_path.display().to_string(),
-            node.name.clone(),
-            node_type.to_string(),
-            node.size.to_string(),
-        ])?;
-
-        // Recursively write children
-        for child in &node.children {
-            self.write_node_csv(writer, child, &current_path)?;
-        }
-
-        Ok(())
-    }
-}
 
 #[cfg(test)]
 mod tests {

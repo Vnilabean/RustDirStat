@@ -54,3 +54,72 @@ cd target/release
 
 # Run the analyzer
 ./ferris-scan-tui
+```
+
+## Architecture
+
+The project follows a "Core + Frontend" architecture to separate scanning logic from the user interface.
+
+### Core Library
+
+`lib.rs`: Contains the Scanner struct, thread pool management, and data structures.
+
+### Terminal User Interface
+
+`bin/tui.rs`: The Terminal User Interface implementation.
+
+Comparison run on a Samsung 980 PRO NVMe (1TB capacity, ~250GB used).
+
+| Tool           | Scan Time | Memory Usage | Binary Size | Architecture      |
+|----------------|-----------|--------------|-------------|-------------------|
+| ferris-scan    | 5.2s      | 78 MB        | 2.6 MB      | Rust (Parallel)   |
+| WizTree        | 3.8s      | 180 MB       | 4.2 MB      | MFT Parsing       |
+| TreeSize Free  | 12s       | 95 MB        | 38 MB       | C++ / GUI         |
+| WinDirStat     | 58s       | 220 MB       | 1.8 MB      | C++ (Sequential)  |
+
+Note: MFT parsing support for ferris-scan is currently in development (v0.3).
+
+## Usage
+
+Basic Scan:
+```bash
+./ferris-scan-tui "C:\Users"
+```
+
+Controls:
+* Arrow Keys: Navigate the file tree (In Progress)
+* E: Export results to CSV
+* Esc / Q: Quit
+
+CSV Export: The application generates a structured CSV file suitable for automation or analysis in Python/Excel.
+
+```csv
+Path,Name,Type,Size (bytes)
+Documents,Documents,Directory,52428800
+Documents\Logs,Logs,Directory,102400
+...
+```
+
+## Roadmap
+
+```
+    [x] Multi-threaded scanning engine (jwalk)
+
+    [x] Basic TUI implementation (ratatui)
+
+    [x] CSV Export functionality
+
+    [x] Permission error handling
+
+    [x] v0.2: Interactive tree navigation (Drill down/up)
+
+    [ ] v0.2: File deletion interface
+
+    [ ] v0.3: Direct NTFS MFT Parsing (Driver-level scanning)
+
+    [ ] v0.4: Linux/macOS compatibility polish
+```
+
+## License
+
+This project is licensed under the MIT License.

@@ -53,7 +53,7 @@ use std::{
 };
 
 // ============================================================================
-// APPLICATION STATE
+// TYPES
 // ============================================================================
 
 enum AppState {
@@ -68,6 +68,10 @@ struct App {
     shared_progress: Arc<SharedProgress>,
     popup_message: Option<String>,
 }
+
+// ============================================================================
+// IMPLEMENTATIONS
+// ============================================================================
 
 impl App {
     fn new(scan_path: PathBuf) -> Self {
@@ -91,7 +95,6 @@ impl App {
     fn handle_export(&mut self) {
         #[cfg(feature = "pro")]
         {
-            // Pro version: Actually export the data
             if let AppState::ViewingResults(ref root, _) = self.state {
                 let output_path = self.scan_path.with_file_name("ferris-scan-export.csv");
                 let scanner = Scanner::new();
@@ -114,7 +117,6 @@ impl App {
 
         #[cfg(not(feature = "pro"))]
         {
-            // Free version: Show upgrade message
             self.show_popup(
                 "⚠ This is a Pro Feature\n\n\
                 CSV Export is only available in ferris-scan Pro.\n\n\
@@ -144,7 +146,6 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app state
     let mut app = App::new(scan_path.clone());
 
     // Spawn scanning thread
@@ -159,10 +160,8 @@ fn main() -> Result<()> {
         result
     });
 
-    // Run UI loop
     let res = run_app(&mut terminal, &mut app, scan_handle, scan_done);
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -179,7 +178,7 @@ fn main() -> Result<()> {
 }
 
 // ============================================================================
-// UI EVENT LOOP
+// EVENT LOOP
 // ============================================================================
 
 fn run_app<B: Backend>(
@@ -195,7 +194,6 @@ where
     let mut scan_handle = Some(scan_handle);
 
     loop {
-        // Check if scan is complete
         if scan_done.load(Ordering::Relaxed) {
             if let AppState::Scanning = app.state {
                 if let Some(handle) = scan_handle.take() {
@@ -220,21 +218,17 @@ where
             last_draw = std::time::Instant::now();
         }
 
-        // Handle input (with timeout for responsive UI)
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
-                // Only process key press, not release
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
 
-                // Handle popup close first
                 if app.popup_message.is_some() {
                     app.close_popup();
                     continue;
                 }
 
-                // Main key handlers
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
                         app.should_quit = true;
@@ -263,25 +257,21 @@ fn ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(0),     // Content
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
         ])
         .split(f.area());
 
-    // Header
     render_header(f, chunks[0], app);
 
-    // Content
     match &app.state {
         AppState::Scanning => render_scanning(f, chunks[1], app),
         AppState::ViewingResults(root, report) => render_results(f, chunks[1], root, report),
     }
 
-    // Footer
     render_footer(f, chunks[2], app);
 
-    // Popup (if any)
     if let Some(ref message) = app.popup_message {
         render_popup(f, message);
     }
@@ -422,7 +412,7 @@ fn render_popup(f: &mut Frame, message: &str) {
 }
 
 // ============================================================================
-// UTILITY FUNCTIONS
+// UTILITIES
 // ============================================================================
 
 fn format_size(bytes: u64) -> String {
