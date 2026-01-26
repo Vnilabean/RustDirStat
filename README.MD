@@ -113,7 +113,7 @@ Documents\Logs,Logs,Directory,102400
 
     [x] v0.2: Interactive tree navigation (Drill down/up)
 
-    [ ] v0.2: File deletion interface
+    [x] v0.2: File deletion interface
 
     [ ] v0.3: Direct NTFS MFT Parsing (Driver-level scanning)
 
