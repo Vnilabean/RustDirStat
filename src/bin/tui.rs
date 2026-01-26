@@ -35,7 +35,7 @@ use std::{
 };
 
 // ============================================================================
-// APPLICATION STATE
+// TYPES
 // ============================================================================
 
 enum AppState {
@@ -50,6 +50,22 @@ struct NavigationState {
     /// Currently selected item index in the list
     selected: usize,
 }
+
+struct App {
+    state: AppState,
+    should_quit: bool,
+    scan_path: PathBuf,
+    shared_progress: Arc<SharedProgress>,
+    popup_message: Option<String>,
+    navigation: Option<NavigationState>,
+    list_state: ListState,
+    show_delete_modal: bool,
+    pending_deletion: Option<PathBuf>,
+}
+
+// ============================================================================
+// IMPLEMENTATIONS
+// ============================================================================
 
 impl NavigationState {
     fn new(root: Node) -> Self {
@@ -95,16 +111,54 @@ impl NavigationState {
         }
         false
     }
-}
 
-struct App {
-    state: AppState,
-    should_quit: bool,
-    scan_path: PathBuf,
-    shared_progress: Arc<SharedProgress>,
-    popup_message: Option<String>,
-    navigation: Option<NavigationState>,
-    list_state: ListState,
+    fn rebuild_from_root(&mut self, root: &Node) {
+        if self.path.is_empty() {
+            self.path = vec![root.clone()];
+            self.selected = 0;
+            return;
+        }
+
+
+        let target_path = self.path.last().map(|n| n.path.clone());
+        
+        // Rebuild path from root
+        self.path.clear();
+        self.path.push(root.clone());
+        
+        if let Some(ref target) = target_path {
+            if target == &root.path {
+                self.selected = 0;
+                return;
+            }
+            
+            if let Ok(relative) = target.strip_prefix(&root.path) {
+                let mut current = root;
+                let mut found = true;
+                
+                // Navigate through each component in the relative path
+                for component in relative.components() {
+                    let name = component.as_os_str().to_string_lossy();
+                    if let Some(child) = current.children.iter().find(|c| c.name == name) {
+                        self.path.push(child.clone());
+                        current = child;
+                    } else {
+                        found = false;
+                        break;
+                    }
+                }
+                
+                if !found {
+                    self.path = vec![root.clone()];
+                }
+            } else {
+                // Path doesn't start with root
+                self.path = vec![root.clone()];
+            }
+        }
+        
+        self.selected = 0;
+    }
 }
 
 impl App {
@@ -117,6 +171,8 @@ impl App {
             popup_message: None,
             navigation: None,
             list_state: ListState::default(),
+            show_delete_modal: false,
+            pending_deletion: None,
         }
     }
 
@@ -128,10 +184,68 @@ impl App {
         self.popup_message = None;
     }
 
+    fn handle_delete(&mut self) {
+        if let AppState::ViewingResults(_, _) = self.state {
+            if let Some(ref nav) = self.navigation {
+                if let Some(selected) = self.list_state.selected() {
+                    let current = nav.current();
+                    if let Some(selected_item) = current.children.get(selected) {
+                        self.pending_deletion = Some(selected_item.path.clone());
+                        self.show_delete_modal = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn confirm_deletion(&mut self) {
+        if let Some(path) = self.pending_deletion.take() {
+            if let AppState::ViewingResults(ref mut root, _) = self.state {
+                // Check if we're deleting the current directory before deletion
+                let deleting_current = self.navigation
+                    .as_ref()
+                    .map(|nav| nav.current().path == path)
+                    .unwrap_or(false);
+
+                match root.delete_node(&path) {
+                    Ok(()) => {
+                        // Rebuild navigation state from the updated root
+                        if let Some(ref mut nav) = self.navigation {
+                            if deleting_current {
+                                nav.drill_up();
+                            }
+                            nav.rebuild_from_root(root);
+                            
+
+
+                            let current = nav.current();
+                            if let Some(selected) = self.list_state.selected() {
+                                if selected >= current.children.len() && !current.children.is_empty() {
+                                    self.list_state.select(Some(current.children.len() - 1));
+                                } else if current.children.is_empty() {
+                                    self.list_state.select(None);
+                                }
+                            }
+                        }
+                        self.show_popup(format!("✓ Successfully deleted: {}", path.display()));
+                    }
+                    Err(e) => {
+                        self.show_popup(format!("✗ Deletion failed: {}", e));
+                    }
+                }
+            }
+        }
+        self.show_delete_modal = false;
+    }
+
+    fn cancel_deletion(&mut self) {
+        self.pending_deletion = None;
+        self.show_delete_modal = false;
+    }
+
     fn handle_export(&mut self) {
         #[cfg(feature = "pro")]
         {
-            // Pro version: Actually export the data
             if let AppState::ViewingResults(ref root, _) = self.state {
                 let output_path = self.scan_path.with_file_name("ferris-scan-export.csv");
                 let scanner = Scanner::new();
@@ -154,7 +268,6 @@ impl App {
 
         #[cfg(not(feature = "pro"))]
         {
-            // Free version: Show upgrade message
             self.show_popup(
                 "⚠ This is a Pro Feature\n\n\
                 CSV Export is only available in ferris-scan Pro.\n\n\
@@ -177,17 +290,14 @@ fn main() -> Result<()> {
         env::current_dir()?
     };
 
-    // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app state
     let mut app = App::new(scan_path.clone());
 
-    // Spawn scanning thread
     let shared_progress = Arc::clone(&app.shared_progress);
     let scan_done = Arc::new(AtomicBool::new(false));
     let scan_done_clone = Arc::clone(&scan_done);
@@ -199,10 +309,8 @@ fn main() -> Result<()> {
         result
     });
 
-    // Run UI loop
     let res = run_app(&mut terminal, &mut app, scan_handle, scan_done);
 
-    // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -219,7 +327,7 @@ fn main() -> Result<()> {
 }
 
 // ============================================================================
-// UI EVENT LOOP
+// EVENT LOOP
 // ============================================================================
 
 fn run_app<B: Backend>(
@@ -235,7 +343,6 @@ where
     let mut scan_handle = Some(scan_handle);
 
     loop {
-        // Check if scan is complete
         if scan_done.load(Ordering::Relaxed) {
             if let AppState::Scanning = app.state {
                 if let Some(handle) = scan_handle.take() {
@@ -256,33 +363,40 @@ where
             }
         }
 
-        // Render UI (throttled to ~30 FPS)
         if last_draw.elapsed() >= Duration::from_millis(33) {
             terminal.draw(|f| ui(f, &mut *app))?;
             last_draw = std::time::Instant::now();
         }
 
-        // Handle input (with timeout for responsive UI)
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
-                // Only process key press, not release
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
 
-                // Handle popup close first
+                if app.show_delete_modal {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            app.confirm_deletion();
+                        }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            app.cancel_deletion();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.popup_message.is_some() {
                     app.close_popup();
                     continue;
                 }
 
-                // Main key handlers
                 match key.code {
                     KeyCode::Char('q') => {
                         app.should_quit = true;
                     }
                     KeyCode::Esc => {
-                        // If in a subdirectory, go up; otherwise quit
                         if let Some(ref mut nav) = app.navigation {
                             if nav.drill_up() {
                                 app.list_state.select(Some(0));
@@ -296,8 +410,10 @@ where
                     KeyCode::Char('e') => {
                         app.handle_export();
                     }
+                    KeyCode::Char('d') => {
+                        app.handle_delete();
+                    }
                     KeyCode::Enter => {
-                        // Drill down into selected directory
                         if let Some(ref mut nav) = app.navigation {
                             if let Some(selected) = app.list_state.selected() {
                                 if nav.drill_down(selected) {
@@ -307,7 +423,6 @@ where
                         }
                     }
                     KeyCode::Backspace => {
-                        // Go up one level
                         if let Some(ref mut nav) = app.navigation {
                             nav.drill_up();
                             app.list_state.select(Some(0));
@@ -342,14 +457,12 @@ where
                         }
                     }
                     KeyCode::Char('h') => {
-                        // Go up one level (same as Backspace)
                         if let Some(ref mut nav) = app.navigation {
                             nav.drill_up();
                             app.list_state.select(Some(0));
                         }
                     }
                     KeyCode::Char('l') => {
-                        // Drill down into selected directory (same as Enter)
                         if let Some(ref mut nav) = app.navigation {
                             if let Some(selected) = app.list_state.selected() {
                                 if nav.drill_down(selected) {
@@ -379,16 +492,14 @@ fn ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(0),     // Content
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
         ])
         .split(f.area());
 
-    // Header
     render_header(f, chunks[0], app);
 
-    // Content
     match &app.state {
         AppState::Scanning => render_scanning(f, chunks[1], app),
         AppState::ViewingResults(root, report) => {
@@ -396,12 +507,21 @@ fn ui(f: &mut Frame, app: &mut App) {
         }
     }
 
-    // Footer
     render_footer(f, chunks[2], app);
 
-    // Popup (if any)
     if let Some(ref message) = app.popup_message {
         render_popup(f, message);
+    }
+
+    if app.show_delete_modal {
+        if let Some(ref path) = app.pending_deletion {
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            draw_delete_modal(f, &filename);
+        }
     }
 }
 
@@ -473,16 +593,14 @@ fn render_scanning(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, navigation: &Option<NavigationState>, list_state: &mut ListState) {
-    // First split: breadcrumb at top, content below
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Breadcrumb
-            Constraint::Min(0),     // Multi-pane content
+            Constraint::Length(3),
+            Constraint::Min(0),
         ])
         .split(area);
 
-    // Breadcrumb
     let breadcrumb_text = navigation
         .as_ref()
         .map(|nav| nav.breadcrumb())
@@ -499,17 +617,15 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
     
     f.render_widget(breadcrumb, main_chunks[0]);
 
-    // Multi-pane layout: Tree | Details | Progress
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40),  // Tree view
-            Constraint::Percentage(35), // Details view
-            Constraint::Percentage(25), // Progress/Stats view
+            Constraint::Percentage(40),
+            Constraint::Percentage(35),
+            Constraint::Percentage(25),
         ])
         .split(main_chunks[1]);
 
-    // Get current node and selected item
     let current_node = navigation
         .as_ref()
         .map(|nav| nav.current())
@@ -518,13 +634,8 @@ fn render_results(f: &mut Frame, area: Rect, root: &Node, report: &ScanReport, n
     let selected_index = list_state.selected().unwrap_or(0);
     let selected_item = current_node.children.get(selected_index);
 
-    // Render tree pane (left)
     render_tree_pane(f, panes[0], current_node, list_state);
-
-    // Render details pane (middle)
     render_details_pane(f, panes[1], selected_item, current_node);
-
-    // Render progress/stats pane (right)
     render_stats_pane(f, panes[2], root, report, current_node);
 }
 
@@ -532,24 +643,19 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // Header row
-            Constraint::Min(0),     // List
+            Constraint::Length(1),
+            Constraint::Min(0),
         ])
         .split(area);
 
-    // Calculate available width for the list (accounting for borders)
-    let available_width = area.width.saturating_sub(2) as usize; // Accounts for borders
+    let available_width = area.width.saturating_sub(2) as usize;
     
-    // Reserve space for size column,, need enough for largest formatted size with units
-    // "1234.56 GB" is 10 chars, but lets use 12 to be safe
     let size_column_width = 12;
-    let name_column_width = available_width.saturating_sub(size_column_width + 1); // +1 for spacing
+    let name_column_width = available_width.saturating_sub(size_column_width + 1);
     
-    // Ensure minimum widths
-    let size_column_width = size_column_width.max(10); // At least 10 for "1234.56 GB"
-    let name_column_width = name_column_width.max(10); // At least 10 for names
+    let size_column_width = size_column_width.max(10);
+    let name_column_width = name_column_width.max(10);
     
-    // Header row
     let header_text = format!(
         "{:<width$} {:>size_width$}",
         "Name",
@@ -565,7 +671,6 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     )));
     f.render_widget(header, chunks[0]);
 
-    // List of items
     let mut items = Vec::new();
     for child in &current_node.children {
         let size_str = format_size(child.size);
@@ -580,7 +685,6 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
         
         let max_name_len = max_name_len.max(1);
         
-        // Truncate name if needed
         let display_name = if child.name.chars().count() > max_name_len {
             let truncated: String = child.name.chars().take(max_name_len.saturating_sub(3)).collect();
             format!("{}...", truncated)
@@ -588,25 +692,16 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
             child.name.clone()
         };
         
-        // Build the line ensuring size_str (with units) is always visible
-        // Format: emoji + name + padding + size_str (with units)
         let name_with_emoji = format!("{} {}", type_indicator, display_name);
         
-        // Calculate maximum line length
-        // We'll truncate the name if needed, but NEVER truncate size_str
         let max_line_len = available_width;
-        let size_str_bytes = size_str.len(); // size_str is ASCII, so bytes == chars
+        let size_str_bytes = size_str.len();
         
-        // Calculate how much space we need for name + padding
-        // We MUST reserve size_str_bytes for the size (with units)
         let max_name_bytes = max_line_len.saturating_sub(size_str_bytes).saturating_sub(1); 
         
-        // Truncate name_with_emoji if it's too long (but preserve size_str)
         let final_name = if name_with_emoji.len() > max_name_bytes {
-            // Truncate name to fit (safely handle UTF-8 multi-byte characters)
             let truncate_to = max_name_bytes.saturating_sub(3);
             if truncate_to > 0 {
-                // Find the last character whose end position fits within truncate_to bytes
                 let safe_truncate = name_with_emoji
                     .char_indices()
                     .take_while(|(idx, c)| idx + c.len_utf8() <= truncate_to)
@@ -621,7 +716,6 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
             name_with_emoji
         };
         
-        // Calculate padding to right-align size_str
         let final_name_len = final_name.len();
         let padding_needed = max_line_len
             .saturating_sub(final_name_len)
@@ -629,18 +723,13 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
         
         let padding = " ".repeat(padding_needed.max(1));
         
-        // Build final line: name + padding + size_str
-        // size_str is ALWAYS at the end and NEVER truncated
         let final_line = format!("{}{}{}", final_name, padding, size_str);
         
-        // Verify size_str is at the end
         if final_line.ends_with(&size_str) {
-            // Split for coloring
             let split_point = final_line.len() - size_str_bytes;
             let name_part = final_line[..split_point].to_string();
             let size_part = final_line[split_point..].to_string();
             
-            // Verify size_part equals size_str
             if size_part == size_str {
                 items.push(ListItem::new(Line::from(vec![
                     Span::raw(name_part),
@@ -650,11 +739,9 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
                     ),
                 ])));
             } else {
-                // Fallback: show whole line
                 items.push(ListItem::new(Line::from(Span::raw(final_line))));
             }
         } else {
-            // Fallback: size_str not at end (shouldn't happen)
             items.push(ListItem::new(Line::from(Span::raw(final_line))));
         }
     }
@@ -679,7 +766,7 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     f.render_stateful_widget(list, chunks[1], list_state);
 }
 
-fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, current_node: &Node) {
+fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, _current_node: &Node) {
     let details_text = if let Some(item) = selected_item {
         vec![
             Line::from(""),
@@ -825,6 +912,8 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(": Quit | "),
             Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(": Open | "),
+            Span::styled("d", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(": Delete | "),
             Span::styled("Esc", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
             Span::raw(": Back | "),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -864,8 +953,32 @@ fn render_popup(f: &mut Frame, message: &str) {
     f.render_widget(text, area);
 }
 
+fn draw_delete_modal(f: &mut Frame, filename: &str) {
+    let area = centered_rect(60, 30, f.area());
+
+    let message = format!(
+        "Are you sure you want to delete\n{}\n\nThis cannot be undone.\n\n[y/Enter] Confirm  [n/Esc] Cancel",
+        filename
+    );
+
+    let block = Block::default()
+        .title(" Delete Confirmation ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .style(Style::default().bg(Color::Black));
+
+    let text = Paragraph::new(message)
+        .block(block)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .style(Style::default().fg(Color::Yellow));
+
+    f.render_widget(Clear, area);
+    f.render_widget(text, area);
+}
+
 // ============================================================================
-// UTILITY FUNCTIONS
+// UTILITIES
 // ============================================================================
 
 fn format_size(bytes: u64) -> String {
