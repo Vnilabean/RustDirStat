@@ -59,6 +59,8 @@ struct App {
     popup_message: Option<String>,
     navigation: Option<NavigationState>,
     list_state: ListState,
+    show_delete_modal: bool,
+    pending_deletion: Option<PathBuf>,
 }
 
 // ============================================================================
@@ -109,6 +111,54 @@ impl NavigationState {
         }
         false
     }
+
+    fn rebuild_from_root(&mut self, root: &Node) {
+        if self.path.is_empty() {
+            self.path = vec![root.clone()];
+            self.selected = 0;
+            return;
+        }
+
+
+        let target_path = self.path.last().map(|n| n.path.clone());
+        
+        // Rebuild path from root
+        self.path.clear();
+        self.path.push(root.clone());
+        
+        if let Some(ref target) = target_path {
+            if target == &root.path {
+                self.selected = 0;
+                return;
+            }
+            
+            if let Ok(relative) = target.strip_prefix(&root.path) {
+                let mut current = root;
+                let mut found = true;
+                
+                // Navigate through each component in the relative path
+                for component in relative.components() {
+                    let name = component.as_os_str().to_string_lossy();
+                    if let Some(child) = current.children.iter().find(|c| c.name == name) {
+                        self.path.push(child.clone());
+                        current = child;
+                    } else {
+                        found = false;
+                        break;
+                    }
+                }
+                
+                if !found {
+                    self.path = vec![root.clone()];
+                }
+            } else {
+                // Path doesn't start with root
+                self.path = vec![root.clone()];
+            }
+        }
+        
+        self.selected = 0;
+    }
 }
 
 impl App {
@@ -121,6 +171,8 @@ impl App {
             popup_message: None,
             navigation: None,
             list_state: ListState::default(),
+            show_delete_modal: false,
+            pending_deletion: None,
         }
     }
 
@@ -130,6 +182,65 @@ impl App {
 
     fn close_popup(&mut self) {
         self.popup_message = None;
+    }
+
+    fn handle_delete(&mut self) {
+        if let AppState::ViewingResults(_, _) = self.state {
+            if let Some(ref nav) = self.navigation {
+                if let Some(selected) = self.list_state.selected() {
+                    let current = nav.current();
+                    if let Some(selected_item) = current.children.get(selected) {
+                        self.pending_deletion = Some(selected_item.path.clone());
+                        self.show_delete_modal = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn confirm_deletion(&mut self) {
+        if let Some(path) = self.pending_deletion.take() {
+            if let AppState::ViewingResults(ref mut root, _) = self.state {
+                // Check if we're deleting the current directory before deletion
+                let deleting_current = self.navigation
+                    .as_ref()
+                    .map(|nav| nav.current().path == path)
+                    .unwrap_or(false);
+
+                match root.delete_node(&path) {
+                    Ok(()) => {
+                        // Rebuild navigation state from the updated root
+                        if let Some(ref mut nav) = self.navigation {
+                            if deleting_current {
+                                nav.drill_up();
+                            }
+                            nav.rebuild_from_root(root);
+                            
+
+
+                            let current = nav.current();
+                            if let Some(selected) = self.list_state.selected() {
+                                if selected >= current.children.len() && !current.children.is_empty() {
+                                    self.list_state.select(Some(current.children.len() - 1));
+                                } else if current.children.is_empty() {
+                                    self.list_state.select(None);
+                                }
+                            }
+                        }
+                        self.show_popup(format!("✓ Successfully deleted: {}", path.display()));
+                    }
+                    Err(e) => {
+                        self.show_popup(format!("✗ Deletion failed: {}", e));
+                    }
+                }
+            }
+        }
+        self.show_delete_modal = false;
+    }
+
+    fn cancel_deletion(&mut self) {
+        self.pending_deletion = None;
+        self.show_delete_modal = false;
     }
 
     fn handle_export(&mut self) {
@@ -263,6 +374,19 @@ where
                     continue;
                 }
 
+                if app.show_delete_modal {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            app.confirm_deletion();
+                        }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            app.cancel_deletion();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if app.popup_message.is_some() {
                     app.close_popup();
                     continue;
@@ -285,6 +409,9 @@ where
                     }
                     KeyCode::Char('e') => {
                         app.handle_export();
+                    }
+                    KeyCode::Char('d') => {
+                        app.handle_delete();
                     }
                     KeyCode::Enter => {
                         if let Some(ref mut nav) = app.navigation {
@@ -384,6 +511,17 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     if let Some(ref message) = app.popup_message {
         render_popup(f, message);
+    }
+
+    if app.show_delete_modal {
+        if let Some(ref path) = app.pending_deletion {
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            draw_delete_modal(f, &filename);
+        }
     }
 }
 
@@ -628,7 +766,7 @@ fn render_tree_pane(f: &mut Frame, area: Rect, current_node: &Node, list_state: 
     f.render_stateful_widget(list, chunks[1], list_state);
 }
 
-fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, current_node: &Node) {
+fn render_details_pane(f: &mut Frame, area: Rect, selected_item: Option<&Node>, _current_node: &Node) {
     let details_text = if let Some(item) = selected_item {
         vec![
             Line::from(""),
@@ -774,6 +912,8 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(": Quit | "),
             Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(": Open | "),
+            Span::styled("d", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(": Delete | "),
             Span::styled("Esc", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
             Span::raw(": Back | "),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
@@ -808,6 +948,30 @@ fn render_popup(f: &mut Frame, message: &str) {
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true })
         .style(Style::default().fg(Color::Cyan));
+
+    f.render_widget(Clear, area);
+    f.render_widget(text, area);
+}
+
+fn draw_delete_modal(f: &mut Frame, filename: &str) {
+    let area = centered_rect(60, 30, f.area());
+
+    let message = format!(
+        "Are you sure you want to delete\n{}\n\nThis cannot be undone.\n\n[y/Enter] Confirm  [n/Esc] Cancel",
+        filename
+    );
+
+    let block = Block::default()
+        .title(" Delete Confirmation ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .style(Style::default().bg(Color::Black));
+
+    let text = Paragraph::new(message)
+        .block(block)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true })
+        .style(Style::default().fg(Color::Yellow));
 
     f.render_widget(Clear, area);
     f.render_widget(text, area);

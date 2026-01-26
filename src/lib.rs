@@ -127,6 +127,66 @@ impl Node {
             children: Vec::new(),
         }
     }
+
+
+
+    /// Delete a node from the tree by path and remove it from disk.
+    /// 
+    /// This method:
+    /// 1. Finds the node in the tree by matching its path
+    /// 2. Deletes it from disk
+    /// 3. Removes it from the parents children vector
+    /// 4. Updates parent sizes by subtracting the deleted node's size
+    /// 
+    /// # Arguments
+    /// * `target_path` - The path of the node to delete
+    /// 
+    /// # Returns
+    /// * `Ok(())` - If deletion succeeded
+    /// * `Err(std::io::Error)` - If deletion failed
+    pub fn delete_node(&mut self, target_path: &Path) -> Result<(), std::io::Error> {
+        if let Some((deleted_size, deleted_is_dir)) = self.remove_child_by_path(target_path)? {
+            if deleted_is_dir {
+                std::fs::remove_dir_all(target_path)?;
+            } else {
+                std::fs::remove_file(target_path)?;
+            }
+            
+            // Update this node's size by subtract the deleted nodes size
+            self.size = self.size.saturating_sub(deleted_size);
+            
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Node not found: {}", target_path.display()),
+            ))
+        }
+    }
+
+    /// Recursively search for and remove a child node by path.
+    /// Returns the size and is_dir flag of the deleted node if found.
+    fn remove_child_by_path(&mut self, target_path: &Path) -> Result<Option<(u64, bool)>, std::io::Error> {
+        for (index, child) in self.children.iter().enumerate() {
+            if child.path == target_path {
+                let deleted_size = child.size;
+                let deleted_is_dir = child.is_dir;
+                self.children.remove(index);
+                return Ok(Some((deleted_size, deleted_is_dir)));
+            }
+        }
+
+        for child in &mut self.children {
+            if target_path.starts_with(&child.path) {
+                if let Some((deleted_size, deleted_is_dir)) = child.remove_child_by_path(target_path)? {
+                    self.size = self.size.saturating_sub(deleted_size);
+                    return Ok(Some((deleted_size, deleted_is_dir)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 impl Ord for Node {
